@@ -93,6 +93,8 @@ AntflyErrorCode antfly_db_search_hits_json(void* handle, AntflySlice request_jso
 AntflyErrorCode antfly_db_search_dense(void* handle, AntflySlice index_name, const float* vector_ptr, size_t vector_len, uint32_t k, uint32_t limit, uint32_t offset, AntflyPackedDenseSearchResult* out_result);
 AntflyErrorCode antfly_db_search_dense_wire(void* handle, AntflySlice request_buf, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_search_text_match_wire(void* handle, AntflySlice request_buf, AntflyBuffer* out_buf);
+AntflyErrorCode antfly_db_search_text_term_wire(void* handle, AntflySlice request_buf, AntflyBuffer* out_buf);
+AntflyErrorCode antfly_db_search_text_match_phrase_wire(void* handle, AntflySlice request_buf, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_execute_graph_queries_json(void* handle, AntflySlice request_json, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_aggregate_hits_json(void* handle, AntflySlice request_json, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_stats_json(void* handle, AntflyBuffer* out_buf);
@@ -133,6 +135,7 @@ import (
 	"fmt"
 	"github.com/antflydb/antfly/lib/vectorindex"
 	json "github.com/antflydb/antfly/pkg/libaf/json"
+	"github.com/antflydb/antfly/src/store/searchwire"
 	bleve "github.com/blevesearch/bleve/v2"
 	bleveSearch "github.com/blevesearch/bleve/v2/search"
 	"math"
@@ -161,10 +164,12 @@ var (
 )
 
 const (
-	denseSearchWireMagic   uint32 = 0x41464442
-	denseSearchWireVersion uint16 = 1
-	denseSearchWireOpDense uint16 = 1
-	textMatchWireOp        uint16 = 2
+	denseSearchWireMagic   uint32 = searchwire.Magic
+	denseSearchWireVersion uint16 = searchwire.Version
+	denseSearchWireOpDense uint16 = searchwire.OpDenseKnn
+	textMatchWireOp        uint16 = searchwire.OpTextMatch
+	textTermWireOp         uint16 = searchwire.OpTextTerm
+	textMatchPhraseWireOp  uint16 = searchwire.OpTextMatchPhrase
 )
 
 func mapError(code C.AntflyErrorCode) error {
@@ -1167,14 +1172,26 @@ func (b *Bridge) SearchDenseResult(indexName string, vector []float32, k, limit,
 		return nil, ErrInvalidArgument
 	}
 
-	req := encodeDenseSearchWireRequest(indexName, vector, k, limit, offset)
-	var out C.AntflyBuffer
-	if err := mapError(C.antfly_db_search_dense_wire(b.handle, toSlice(req), &out)); err != nil {
+	var result C.AntflyPackedDenseSearchResult
+	var vecPtr *C.float
+	if len(vector) > 0 {
+		vecPtr = (*C.float)(unsafe.Pointer(&vector[0]))
+	}
+	if err := mapError(C.antfly_db_search_dense(
+		b.handle,
+		toSlice([]byte(indexName)),
+		vecPtr,
+		C.size_t(len(vector)),
+		C.uint32_t(k),
+		C.uint32_t(limit),
+		C.uint32_t(offset),
+		&result,
+	)); err != nil {
 		return nil, err
 	}
-	defer C.antfly_db_buffer_free(out.ptr, out.len)
+	defer C.antfly_db_packed_dense_search_result_free(&result)
 
-	return decodeDenseSearchWireResponse(indexName, unsafe.Slice((*byte)(unsafe.Pointer(out.ptr)), int(out.len)))
+	return decodePackedDenseSearchResult(indexName, result), nil
 }
 
 func (b *Bridge) SearchDenseWireRaw(req []byte) ([]byte, error) {
@@ -1187,34 +1204,7 @@ func (b *Bridge) SearchDenseWireRaw(req []byte) ([]byte, error) {
 }
 
 func encodeDenseSearchWireRequest(indexName string, vector []float32, k, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2
-	out := make([]byte, headerLen+len(indexName)+len(vector)*4)
-	cursor := 0
-	binary.LittleEndian.PutUint32(out[cursor:], denseSearchWireMagic)
-	cursor += 4
-	binary.LittleEndian.PutUint16(out[cursor:], denseSearchWireVersion)
-	cursor += 2
-	binary.LittleEndian.PutUint16(out[cursor:], denseSearchWireOpDense)
-	cursor += 2
-	binary.LittleEndian.PutUint32(out[cursor:], 0)
-	cursor += 4
-	binary.LittleEndian.PutUint32(out[cursor:], k)
-	cursor += 4
-	binary.LittleEndian.PutUint32(out[cursor:], limit)
-	cursor += 4
-	binary.LittleEndian.PutUint32(out[cursor:], offset)
-	cursor += 4
-	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
-	cursor += 2
-	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(vector)))
-	cursor += 2
-	copy(out[cursor:], indexName)
-	cursor += len(indexName)
-	for _, value := range vector {
-		binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(value))
-		cursor += 4
-	}
-	return out
+	return searchwire.EncodeDenseRequest(indexName, vector, k, limit, offset)
 }
 
 func decodeDenseSearchWireResponse(indexName string, raw []byte) (*vectorindex.SearchResult, error) {
@@ -1265,34 +1255,42 @@ func decodeDenseSearchWireResponse(indexName string, raw []byte) (*vectorindex.S
 	}, nil
 }
 
+func decodePackedDenseSearchResult(indexName string, result C.AntflyPackedDenseSearchResult) *vectorindex.SearchResult {
+	hitsPayload := decodePackedDenseFastHits(result)
+	hitValues := make([]vectorindex.SearchHit, len(hitsPayload))
+	hits := make([]*vectorindex.SearchHit, len(hitsPayload))
+	for i, hit := range hitsPayload {
+		score := float32(0)
+		if hit.Score != nil {
+			score = *hit.Score
+		}
+		hitValues[i] = vectorindex.SearchHit{
+			Index: indexName,
+			ID:    bytesToStringNoCopy(hit.IDRaw),
+			Score: score,
+		}
+		hits[i] = &hitValues[i]
+	}
+	return &vectorindex.SearchResult{
+		Hits:  hits,
+		Total: uint64(result.total_hits),
+		Status: &vectorindex.SearchStatus{
+			Total:      uint64(result.total_hits),
+			Successful: len(hits),
+		},
+	}
+}
+
 func encodeTextMatchWireRequest(indexName, field, text string, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4
-	out := make([]byte, headerLen+len(indexName)+len(field)+len(text))
-	cursor := 0
-	binary.LittleEndian.PutUint32(out[cursor:], denseSearchWireMagic)
-	cursor += 4
-	binary.LittleEndian.PutUint16(out[cursor:], denseSearchWireVersion)
-	cursor += 2
-	binary.LittleEndian.PutUint16(out[cursor:], textMatchWireOp)
-	cursor += 2
-	binary.LittleEndian.PutUint32(out[cursor:], 0)
-	cursor += 4
-	binary.LittleEndian.PutUint32(out[cursor:], limit)
-	cursor += 4
-	binary.LittleEndian.PutUint32(out[cursor:], offset)
-	cursor += 4
-	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
-	cursor += 2
-	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
-	cursor += 2
-	binary.LittleEndian.PutUint32(out[cursor:], uint32(len(text)))
-	cursor += 4
-	copy(out[cursor:], indexName)
-	cursor += len(indexName)
-	copy(out[cursor:], field)
-	cursor += len(field)
-	copy(out[cursor:], text)
-	return out
+	return searchwire.EncodeTextMatchRequest(indexName, field, text, limit, offset)
+}
+
+func encodeTextTermWireRequest(indexName, field, text string, limit, offset uint32) []byte {
+	return searchwire.EncodeTextTermRequest(indexName, field, text, limit, offset)
+}
+
+func encodeTextMatchPhraseWireRequest(indexName, field, text string, limit, offset uint32) []byte {
+	return searchwire.EncodeTextMatchPhraseRequest(indexName, field, text, limit, offset)
 }
 
 func (b *Bridge) SearchTextMatchWireRaw(req []byte) ([]byte, error) {
@@ -1304,7 +1302,49 @@ func (b *Bridge) SearchTextMatchWireRaw(req []byte) ([]byte, error) {
 	return C.GoBytes(unsafe.Pointer(out.ptr), C.int(out.len)), nil
 }
 
+func (b *Bridge) SearchTextTermWireRaw(req []byte) ([]byte, error) {
+	var out C.AntflyBuffer
+	if err := mapError(C.antfly_db_search_text_term_wire(b.handle, toSlice(req), &out)); err != nil {
+		return nil, err
+	}
+	defer C.antfly_db_buffer_free(out.ptr, out.len)
+	return C.GoBytes(unsafe.Pointer(out.ptr), C.int(out.len)), nil
+}
+
+func (b *Bridge) SearchTextMatchPhraseWireRaw(req []byte) ([]byte, error) {
+	var out C.AntflyBuffer
+	if err := mapError(C.antfly_db_search_text_match_phrase_wire(b.handle, toSlice(req), &out)); err != nil {
+		return nil, err
+	}
+	defer C.antfly_db_buffer_free(out.ptr, out.len)
+	return C.GoBytes(unsafe.Pointer(out.ptr), C.int(out.len)), nil
+}
+
 func decodeTextMatchWireResponse(original *bleve.SearchRequest, raw []byte) (*bleve.SearchResult, error) {
+	return decodeTextWireResponse(original, raw, textMatchWireOp)
+}
+
+func decodeTextTermWireResponse(original *bleve.SearchRequest, raw []byte) (*bleve.SearchResult, error) {
+	return decodeTextWireResponse(original, raw, textTermWireOp)
+}
+
+func decodeTextMatchPhraseWireResponse(original *bleve.SearchRequest, raw []byte) (*bleve.SearchResult, error) {
+	return decodeTextWireResponse(original, raw, textMatchPhraseWireOp)
+}
+
+func decodeTextMatchWireHitsResponse(raw []byte) (*SearchResultPayload, error) {
+	return decodeTextWireHitsResponse(raw, textMatchWireOp)
+}
+
+func decodeTextTermWireHitsResponse(raw []byte) (*SearchResultPayload, error) {
+	return decodeTextWireHitsResponse(raw, textTermWireOp)
+}
+
+func decodeTextMatchPhraseWireHitsResponse(raw []byte) (*SearchResultPayload, error) {
+	return decodeTextWireHitsResponse(raw, textMatchPhraseWireOp)
+}
+
+func decodeTextWireHitsResponse(raw []byte, op uint16) (*SearchResultPayload, error) {
 	const headerLen = 4 + 2 + 2 + 4 + 4 + 4
 	const hitLen = 4 + 2 + 2 + 4
 	if len(raw) < headerLen {
@@ -1312,7 +1352,48 @@ func decodeTextMatchWireResponse(original *bleve.SearchRequest, raw []byte) (*bl
 	}
 	if binary.LittleEndian.Uint32(raw[0:4]) != denseSearchWireMagic ||
 		binary.LittleEndian.Uint16(raw[4:6]) != denseSearchWireVersion ||
-		binary.LittleEndian.Uint16(raw[6:8]) != textMatchWireOp {
+		binary.LittleEndian.Uint16(raw[6:8]) != op {
+		return nil, ErrInvalidArgument
+	}
+	totalHits := binary.LittleEndian.Uint32(raw[8:12])
+	hitCount := int(binary.LittleEndian.Uint32(raw[12:16]))
+	idsLen := int(binary.LittleEndian.Uint32(raw[16:20]))
+	if len(raw) < headerLen+hitCount*hitLen+idsLen {
+		return nil, ErrInvalidArgument
+	}
+	hitsStart := headerLen
+	idsStart := headerLen + hitCount*hitLen
+	idsBlob := bytes.Clone(raw[idsStart : idsStart+idsLen])
+	hits := make([]SearchHitPayload, hitCount)
+	for i := 0; i < hitCount; i++ {
+		base := hitsStart + i*hitLen
+		idOffset := int(binary.LittleEndian.Uint32(raw[base : base+4]))
+		idLen := int(binary.LittleEndian.Uint16(raw[base+4 : base+6]))
+		score := math.Float32frombits(binary.LittleEndian.Uint32(raw[base+8 : base+12]))
+		if idOffset < 0 || idOffset+idLen > len(idsBlob) {
+			return nil, ErrInvalidArgument
+		}
+		id := idsBlob[idOffset : idOffset+idLen : idOffset+idLen]
+		hits[i] = SearchHitPayload{
+			IDRaw: id,
+			Score: &score,
+		}
+	}
+	return &SearchResultPayload{
+		TotalHits: totalHits,
+		Hits:      hits,
+	}, nil
+}
+
+func decodeTextWireResponse(original *bleve.SearchRequest, raw []byte, op uint16) (*bleve.SearchResult, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4
+	const hitLen = 4 + 2 + 2 + 4
+	if len(raw) < headerLen {
+		return nil, ErrInvalidArgument
+	}
+	if binary.LittleEndian.Uint32(raw[0:4]) != denseSearchWireMagic ||
+		binary.LittleEndian.Uint16(raw[4:6]) != denseSearchWireVersion ||
+		binary.LittleEndian.Uint16(raw[6:8]) != op {
 		return nil, ErrInvalidArgument
 	}
 	totalHits := binary.LittleEndian.Uint32(raw[8:12])
@@ -1377,20 +1458,41 @@ func (b *Bridge) SearchBleveResult(req SearchRequestPayload, original *bleve.Sea
 		return nil, false, nil
 	}
 
-	if req.Mode == "full_text" && req.TextQueryType == "match" && req.IndexName != "" && req.Field != "" && req.Text != "" {
-		wireReq := encodeTextMatchWireRequest(req.IndexName, req.Field, req.Text, req.Limit, req.Offset)
-		var out C.AntflyBuffer
-		if err := mapError(C.antfly_db_search_text_match_wire(b.handle, toSlice(wireReq), &out)); err != nil {
+	if req.Mode == "full_text" && req.IndexName != "" && req.Field != "" && req.Text != "" {
+		var (
+			wireReq  []byte
+			callWire func([]byte) ([]byte, error)
+			decode   func(*bleve.SearchRequest, []byte) (*bleve.SearchResult, error)
+		)
+		switch req.TextQueryType {
+		case "match":
+			wireReq = encodeTextMatchWireRequest(req.IndexName, req.Field, req.Text, req.Limit, req.Offset)
+			callWire = b.SearchTextMatchWireRaw
+			decode = decodeTextMatchWireResponse
+		case "term":
+			wireReq = encodeTextTermWireRequest(req.IndexName, req.Field, req.Text, req.Limit, req.Offset)
+			callWire = b.SearchTextTermWireRaw
+			decode = decodeTextTermWireResponse
+		case "match_phrase":
+			wireReq = encodeTextMatchPhraseWireRequest(req.IndexName, req.Field, req.Text, req.Limit, req.Offset)
+			callWire = b.SearchTextMatchPhraseWireRaw
+			decode = decodeTextMatchPhraseWireResponse
+		}
+		if callWire == nil {
+			goto jsonFallback
+		}
+		raw, err := callWire(wireReq)
+		if err != nil {
 			return nil, false, err
 		}
-		defer C.antfly_db_buffer_free(out.ptr, out.len)
-		result, err := decodeTextMatchWireResponse(original, unsafe.Slice((*byte)(unsafe.Pointer(out.ptr)), int(out.len)))
+		result, err := decode(original, raw)
 		if err != nil {
 			return nil, false, err
 		}
 		return result, true, nil
 	}
 
+jsonFallback:
 	raw, err := json.Marshal(req)
 	if err != nil {
 		return nil, false, err
@@ -1441,6 +1543,39 @@ func (b *Bridge) searchHitsFast(req SearchRequestPayload) (*SearchResultPayload,
 	}
 	if req.ReturnMode != "" && req.ReturnMode != "parent" {
 		return nil, false, nil
+	}
+
+	if req.Mode == "full_text" && req.IndexName != "" && req.Field != "" && req.Text != "" {
+		var (
+			wireReq  []byte
+			callWire func([]byte) ([]byte, error)
+			decode   func([]byte) (*SearchResultPayload, error)
+		)
+		switch req.TextQueryType {
+		case "match":
+			wireReq = encodeTextMatchWireRequest(req.IndexName, req.Field, req.Text, req.Limit, req.Offset)
+			callWire = b.SearchTextMatchWireRaw
+			decode = decodeTextMatchWireHitsResponse
+		case "term":
+			wireReq = encodeTextTermWireRequest(req.IndexName, req.Field, req.Text, req.Limit, req.Offset)
+			callWire = b.SearchTextTermWireRaw
+			decode = decodeTextTermWireHitsResponse
+		case "match_phrase":
+			wireReq = encodeTextMatchPhraseWireRequest(req.IndexName, req.Field, req.Text, req.Limit, req.Offset)
+			callWire = b.SearchTextMatchPhraseWireRaw
+			decode = decodeTextMatchPhraseWireHitsResponse
+		}
+		if callWire != nil {
+			raw, err := callWire(wireReq)
+			if err != nil {
+				return nil, false, err
+			}
+			result, err := decode(raw)
+			if err != nil {
+				return nil, false, err
+			}
+			return result, true, nil
+		}
 	}
 
 	raw, err := json.Marshal(req)
