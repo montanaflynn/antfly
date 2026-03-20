@@ -502,6 +502,9 @@ func (db *ZigCoreDB) Search(ctx context.Context, encodedRequest []byte) ([]byte,
 	if bridge == nil {
 		return nil, zigUnsupported("Search without open bridge")
 	}
+	if op, ok := searchWireOp(encodedRequest); ok {
+		return db.searchWireFastPath(ctx, bridge, encodedRequest, op)
+	}
 
 	var req indexes.RemoteIndexSearchRequest
 	if err := json.Unmarshal(encodedRequest, &req); err != nil {
@@ -880,6 +883,17 @@ func (db *ZigCoreDB) Search(ctx context.Context, encodedRequest []byte) ([]byte,
 	}
 
 	return json.Marshal(res)
+}
+
+func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridge, encodedRequest []byte, op uint16) ([]byte, error) {
+	switch op {
+	case searchWireOpDenseKnn:
+		return bridge.SearchDenseWireRaw(encodedRequest)
+	case searchWireOpTextMatch:
+		return bridge.SearchTextMatchWireRaw(encodedRequest)
+	default:
+		return nil, zigUnsupported("Search wire op not implemented")
+	}
 }
 
 func applyRerankingToRemoteResults(

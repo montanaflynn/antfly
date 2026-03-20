@@ -1177,6 +1177,15 @@ func (b *Bridge) SearchDenseResult(indexName string, vector []float32, k, limit,
 	return decodeDenseSearchWireResponse(indexName, unsafe.Slice((*byte)(unsafe.Pointer(out.ptr)), int(out.len)))
 }
 
+func (b *Bridge) SearchDenseWireRaw(req []byte) ([]byte, error) {
+	var out C.AntflyBuffer
+	if err := mapError(C.antfly_db_search_dense_wire(b.handle, toSlice(req), &out)); err != nil {
+		return nil, err
+	}
+	defer C.antfly_db_buffer_free(out.ptr, out.len)
+	return C.GoBytes(unsafe.Pointer(out.ptr), C.int(out.len)), nil
+}
+
 func encodeDenseSearchWireRequest(indexName string, vector []float32, k, limit, offset uint32) []byte {
 	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2
 	out := make([]byte, headerLen+len(indexName)+len(vector)*4)
@@ -1284,6 +1293,15 @@ func encodeTextMatchWireRequest(indexName, field, text string, limit, offset uin
 	cursor += len(field)
 	copy(out[cursor:], text)
 	return out
+}
+
+func (b *Bridge) SearchTextMatchWireRaw(req []byte) ([]byte, error) {
+	var out C.AntflyBuffer
+	if err := mapError(C.antfly_db_search_text_match_wire(b.handle, toSlice(req), &out)); err != nil {
+		return nil, err
+	}
+	defer C.antfly_db_buffer_free(out.ptr, out.len)
+	return C.GoBytes(unsafe.Pointer(out.ptr), C.int(out.len)), nil
 }
 
 func decodeTextMatchWireResponse(original *bleve.SearchRequest, raw []byte) (*bleve.SearchResult, error) {

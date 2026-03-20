@@ -293,9 +293,17 @@ func BenchmarkCoreDBBackends(b *testing.B) {
 					Limit:              10,
 				}
 				req.BleveSearchRequest.Size = 10
-				reqBytes, err := json.Marshal(req)
-				if err != nil {
-					b.Fatal(err)
+				var (
+					reqBytes []byte
+					err      error
+				)
+				if backend.name == "zig" {
+					reqBytes = encodeSearchWireTextMatchRequest("full_text_index", "content", "alpha", 10, 0)
+				} else {
+					reqBytes, err = json.Marshal(req)
+					if err != nil {
+						b.Fatal(err)
+					}
 				}
 
 				ctx := context.Background()
@@ -329,9 +337,17 @@ func BenchmarkCoreDBBackends(b *testing.B) {
 					},
 					Limit: 10,
 				}
-				reqBytes, err := json.Marshal(req)
-				if err != nil {
-					b.Fatal(err)
+				var (
+					reqBytes []byte
+					err      error
+				)
+				if backend.name == "zig" {
+					reqBytes = encodeSearchWireDenseRequest("dense_idx", benchmarkVectorValues(0, vectorCase.dim), 10, 10, 0)
+				} else {
+					reqBytes, err = json.Marshal(req)
+					if err != nil {
+						b.Fatal(err)
+					}
 				}
 
 				ctx := context.Background()
