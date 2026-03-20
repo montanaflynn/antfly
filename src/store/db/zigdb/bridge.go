@@ -1236,9 +1236,10 @@ func decodeDenseSearchWireResponse(indexName string, raw []byte) (*vectorindex.S
 		if idOffset < 0 || idOffset+idLen > len(idsBlob) {
 			return nil, ErrInvalidArgument
 		}
+		id := idsBlob[idOffset : idOffset+idLen]
 		hits[i] = &vectorindex.SearchHit{
 			Index: indexName,
-			ID:    string(idsBlob[idOffset : idOffset+idLen]),
+			ID:    bytesToStringNoCopy(id),
 			Score: math.Float32frombits(scoreBits),
 		}
 	}
@@ -1312,8 +1313,9 @@ func decodeTextMatchWireResponse(original *bleve.SearchRequest, raw []byte) (*bl
 		if idOffset < 0 || idOffset+idLen > len(idsBlob) {
 			return nil, ErrInvalidArgument
 		}
+		id := idsBlob[idOffset : idOffset+idLen]
 		hits = append(hits, &bleveSearch.DocumentMatch{
-			ID:    string(idsBlob[idOffset : idOffset+idLen]),
+			ID:    bytesToStringNoCopy(id),
 			Score: score,
 		})
 		if score > maxScore {
@@ -1332,6 +1334,13 @@ func decodeTextMatchWireResponse(original *bleve.SearchRequest, raw []byte) (*bl
 		MaxScore: maxScore,
 		Took:     0,
 	}, nil
+}
+
+func bytesToStringNoCopy(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	return unsafe.String(unsafe.SliceData(b), len(b))
 }
 
 func (b *Bridge) SearchBleveResult(req SearchRequestPayload, original *bleve.SearchRequest) (*bleve.SearchResult, bool, error) {
