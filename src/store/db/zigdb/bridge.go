@@ -127,6 +127,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/antflydb/antfly/lib/vectorindex"
 	json "github.com/antflydb/antfly/pkg/libaf/json"
 	"unsafe"
 )
@@ -1145,6 +1146,52 @@ func (b *Bridge) searchDenseFast(req SearchRequestPayload) (*SearchResultPayload
 		TotalHits: uint32(result.total_hits),
 		Hits:      decodePackedDenseFastHits(result),
 	}, true, nil
+}
+
+func (b *Bridge) SearchDenseResult(indexName string, vector []float32, k, limit, offset uint32) (*vectorindex.SearchResult, error) {
+	if indexName == "" || len(vector) == 0 {
+		return nil, ErrInvalidArgument
+	}
+
+	var result C.AntflyPackedDenseSearchResult
+	vecPtr := (*C.float)(unsafe.Pointer(&vector[0]))
+	if err := mapError(C.antfly_db_search_dense(
+		b.handle,
+		toSlice([]byte(indexName)),
+		vecPtr,
+		C.size_t(len(vector)),
+		C.uint32_t(k),
+		C.uint32_t(limit),
+		C.uint32_t(offset),
+		&result,
+	)); err != nil {
+		return nil, err
+	}
+	defer C.antfly_db_packed_dense_search_result_free(&result)
+
+	hits := make([]*vectorindex.SearchHit, int(result.hit_count))
+	if result.hit_count > 0 {
+		rawHits := unsafe.Slice(result.hits_ptr, int(result.hit_count))
+		idsBlob := C.GoBytes(unsafe.Pointer(result.ids_ptr), C.int(result.ids_len))
+		for i, hit := range rawHits {
+			start := int(hit.id_offset)
+			end := start + int(hit.id_len)
+			hits[i] = &vectorindex.SearchHit{
+				Index: indexName,
+				ID:    string(idsBlob[start:end]),
+				Score: float32(hit.score),
+			}
+		}
+	}
+
+	return &vectorindex.SearchResult{
+		Hits:  hits,
+		Total: uint64(result.total_hits),
+		Status: &vectorindex.SearchStatus{
+			Total:      uint64(result.total_hits),
+			Successful: len(hits),
+		},
+	}, nil
 }
 
 func (b *Bridge) searchHitsFast(req SearchRequestPayload) (*SearchResultPayload, bool, error) {

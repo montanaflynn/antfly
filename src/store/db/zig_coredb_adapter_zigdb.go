@@ -670,21 +670,29 @@ func (db *ZigCoreDB) Search(ctx context.Context, encodedRequest []byte) ([]byte,
 			aggregations = nonTextBackendAggReqs
 		}
 		includeStored := filterQuery != nil
-		payload, err := bridge.Search(zbridge.SearchRequestPayload{
-			Mode:          "dense",
-			IndexName:     indexName,
-			Vector:        vec,
-			K:             uint32(vectorLimit),
-			Limit:         uint32(vectorLimit),
-			IncludeStored: includeStored,
-			Aggregations:  aggregations,
-		})
-		if err != nil {
-			return nil, err
-		}
-		vectorResult, err := decodeVectorSearchResult(indexName, payload)
-		if err != nil {
-			return nil, err
+		var vectorResult *vectorindex.SearchResult
+		if !includeStored && len(aggregations) == 0 {
+			vectorResult, err = bridge.SearchDenseResult(indexName, vec, uint32(vectorLimit), uint32(vectorLimit), 0)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			payload, err := bridge.Search(zbridge.SearchRequestPayload{
+				Mode:          "dense",
+				IndexName:     indexName,
+				Vector:        vec,
+				K:             uint32(vectorLimit),
+				Limit:         uint32(vectorLimit),
+				IncludeStored: includeStored,
+				Aggregations:  aggregations,
+			})
+			if err != nil {
+				return nil, err
+			}
+			vectorResult, err = decodeVectorSearchResult(indexName, payload)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if filterQuery != nil {
 			if err := applyVectorFilterQuery(filterQuery, vectorResult); err != nil {
@@ -698,6 +706,18 @@ func (db *ZigCoreDB) Search(ctx context.Context, encodedRequest []byte) ([]byte,
 		res.VectorSearchResult[indexName] = vectorResult
 		res.Total = max(res.Total, vectorResult.Total)
 		if len(aggregations) > 0 {
+			payload, err := bridge.Search(zbridge.SearchRequestPayload{
+				Mode:          "dense",
+				IndexName:     indexName,
+				Vector:        vec,
+				K:             uint32(vectorLimit),
+				Limit:         uint32(vectorLimit),
+				IncludeStored: includeStored,
+				Aggregations:  aggregations,
+			})
+			if err != nil {
+				return nil, err
+			}
 			res.AggregationResults, err = decodeBackendAggregationResults(payload.Aggregations)
 			if err != nil {
 				return nil, err
