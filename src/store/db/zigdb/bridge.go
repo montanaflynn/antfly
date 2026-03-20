@@ -126,6 +126,7 @@ AntflyErrorCode antfly_db_snapshot(void* handle, AntflySlice id, uint64_t* out_s
 import "C"
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -1173,7 +1174,7 @@ func (b *Bridge) SearchDenseResult(indexName string, vector []float32, k, limit,
 	}
 	defer C.antfly_db_buffer_free(out.ptr, out.len)
 
-	return decodeDenseSearchWireResponse(indexName, C.GoBytes(unsafe.Pointer(out.ptr), C.int(out.len)))
+	return decodeDenseSearchWireResponse(indexName, unsafe.Slice((*byte)(unsafe.Pointer(out.ptr)), int(out.len)))
 }
 
 func encodeDenseSearchWireRequest(indexName string, vector []float32, k, limit, offset uint32) []byte {
@@ -1226,7 +1227,8 @@ func decodeDenseSearchWireResponse(indexName string, raw []byte) (*vectorindex.S
 	}
 	hitsStart := headerLen
 	idsStart := headerLen + hitCount*hitLen
-	idsBlob := raw[idsStart : idsStart+idsLen]
+	idsBlob := bytes.Clone(raw[idsStart : idsStart+idsLen])
+	hitValues := make([]vectorindex.SearchHit, hitCount)
 	hits := make([]*vectorindex.SearchHit, hitCount)
 	for i := 0; i < hitCount; i++ {
 		base := hitsStart + i*hitLen
@@ -1237,11 +1239,12 @@ func decodeDenseSearchWireResponse(indexName string, raw []byte) (*vectorindex.S
 			return nil, ErrInvalidArgument
 		}
 		id := idsBlob[idOffset : idOffset+idLen]
-		hits[i] = &vectorindex.SearchHit{
+		hitValues[i] = vectorindex.SearchHit{
 			Index: indexName,
 			ID:    bytesToStringNoCopy(id),
 			Score: math.Float32frombits(scoreBits),
 		}
+		hits[i] = &hitValues[i]
 	}
 	return &vectorindex.SearchResult{
 		Hits:  hits,
@@ -1302,8 +1305,9 @@ func decodeTextMatchWireResponse(original *bleve.SearchRequest, raw []byte) (*bl
 	}
 	hitsStart := headerLen
 	idsStart := headerLen + hitCount*hitLen
-	idsBlob := raw[idsStart : idsStart+idsLen]
-	hits := make(bleveSearch.DocumentMatchCollection, 0, hitCount)
+	idsBlob := bytes.Clone(raw[idsStart : idsStart+idsLen])
+	hitValues := make([]bleveSearch.DocumentMatch, hitCount)
+	hits := make(bleveSearch.DocumentMatchCollection, hitCount)
 	maxScore := 0.0
 	for i := 0; i < hitCount; i++ {
 		base := hitsStart + i*hitLen
@@ -1314,10 +1318,11 @@ func decodeTextMatchWireResponse(original *bleve.SearchRequest, raw []byte) (*bl
 			return nil, ErrInvalidArgument
 		}
 		id := idsBlob[idOffset : idOffset+idLen]
-		hits = append(hits, &bleveSearch.DocumentMatch{
+		hitValues[i] = bleveSearch.DocumentMatch{
 			ID:    bytesToStringNoCopy(id),
 			Score: score,
-		})
+		}
+		hits[i] = &hitValues[i]
 		if score > maxScore {
 			maxScore = score
 		}
@@ -1361,7 +1366,7 @@ func (b *Bridge) SearchBleveResult(req SearchRequestPayload, original *bleve.Sea
 			return nil, false, err
 		}
 		defer C.antfly_db_buffer_free(out.ptr, out.len)
-		result, err := decodeTextMatchWireResponse(original, C.GoBytes(unsafe.Pointer(out.ptr), C.int(out.len)))
+		result, err := decodeTextMatchWireResponse(original, unsafe.Slice((*byte)(unsafe.Pointer(out.ptr)), int(out.len)))
 		if err != nil {
 			return nil, false, err
 		}
