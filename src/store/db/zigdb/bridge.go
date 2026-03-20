@@ -91,6 +91,7 @@ AntflyErrorCode antfly_db_scan_hashes(void* handle, AntflySlice request_json, An
 AntflyErrorCode antfly_db_search_json(void* handle, AntflySlice request_json, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_search_hits_json(void* handle, AntflySlice request_json, AntflyDenseSearchResult* out_result);
 AntflyErrorCode antfly_db_search_dense(void* handle, AntflySlice index_name, const float* vector_ptr, size_t vector_len, uint32_t k, uint32_t limit, uint32_t offset, AntflyPackedDenseSearchResult* out_result);
+AntflyErrorCode antfly_db_search_dense_wire(void* handle, AntflySlice request_buf, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_execute_graph_queries_json(void* handle, AntflySlice request_json, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_aggregate_hits_json(void* handle, AntflySlice request_json, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_stats_json(void* handle, AntflyBuffer* out_buf);
@@ -125,10 +126,14 @@ import "C"
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/antflydb/antfly/lib/vectorindex"
 	json "github.com/antflydb/antfly/pkg/libaf/json"
+	bleve "github.com/blevesearch/bleve/v2"
+	bleveSearch "github.com/blevesearch/bleve/v2/search"
+	"math"
 	"unsafe"
 )
 
@@ -151,6 +156,12 @@ var (
 	ErrIntentConflict  = errors.New("zigdb intent conflict")
 	ErrTxnNotFound     = errors.New("zigdb transaction not found")
 	ErrInternal        = errors.New("zigdb internal error")
+)
+
+const (
+	denseSearchWireMagic   uint32 = 0x41464442
+	denseSearchWireVersion uint16 = 1
+	denseSearchWireOpDense uint16 = 1
 )
 
 func mapError(code C.AntflyErrorCode) error {
@@ -1153,45 +1164,142 @@ func (b *Bridge) SearchDenseResult(indexName string, vector []float32, k, limit,
 		return nil, ErrInvalidArgument
 	}
 
-	var result C.AntflyPackedDenseSearchResult
-	vecPtr := (*C.float)(unsafe.Pointer(&vector[0]))
-	if err := mapError(C.antfly_db_search_dense(
-		b.handle,
-		toSlice([]byte(indexName)),
-		vecPtr,
-		C.size_t(len(vector)),
-		C.uint32_t(k),
-		C.uint32_t(limit),
-		C.uint32_t(offset),
-		&result,
-	)); err != nil {
+	req := encodeDenseSearchWireRequest(indexName, vector, k, limit, offset)
+	var out C.AntflyBuffer
+	if err := mapError(C.antfly_db_search_dense_wire(b.handle, toSlice(req), &out)); err != nil {
 		return nil, err
 	}
-	defer C.antfly_db_packed_dense_search_result_free(&result)
+	defer C.antfly_db_buffer_free(out.ptr, out.len)
 
-	hits := make([]*vectorindex.SearchHit, int(result.hit_count))
+	return decodeDenseSearchWireResponse(indexName, C.GoBytes(unsafe.Pointer(out.ptr), C.int(out.len)))
+}
+
+func encodeDenseSearchWireRequest(indexName string, vector []float32, k, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2
+	out := make([]byte, headerLen+len(indexName)+len(vector)*4)
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], denseSearchWireMagic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], denseSearchWireVersion)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], denseSearchWireOpDense)
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], 0)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], k)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(vector)))
+	cursor += 2
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	for _, value := range vector {
+		binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(value))
+		cursor += 4
+	}
+	return out
+}
+
+func decodeDenseSearchWireResponse(indexName string, raw []byte) (*vectorindex.SearchResult, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4
+	const hitLen = 4 + 2 + 2 + 4
+	if len(raw) < headerLen {
+		return nil, ErrInvalidArgument
+	}
+	if binary.LittleEndian.Uint32(raw[0:4]) != denseSearchWireMagic ||
+		binary.LittleEndian.Uint16(raw[4:6]) != denseSearchWireVersion ||
+		binary.LittleEndian.Uint16(raw[6:8]) != denseSearchWireOpDense {
+		return nil, ErrInvalidArgument
+	}
+	totalHits := binary.LittleEndian.Uint32(raw[8:12])
+	hitCount := int(binary.LittleEndian.Uint32(raw[12:16]))
+	idsLen := int(binary.LittleEndian.Uint32(raw[16:20]))
+	if len(raw) < headerLen+hitCount*hitLen+idsLen {
+		return nil, ErrInvalidArgument
+	}
+	hitsStart := headerLen
+	idsStart := headerLen + hitCount*hitLen
+	idsBlob := raw[idsStart : idsStart+idsLen]
+	hits := make([]*vectorindex.SearchHit, hitCount)
+	for i := 0; i < hitCount; i++ {
+		base := hitsStart + i*hitLen
+		idOffset := int(binary.LittleEndian.Uint32(raw[base : base+4]))
+		idLen := int(binary.LittleEndian.Uint16(raw[base+4 : base+6]))
+		scoreBits := binary.LittleEndian.Uint32(raw[base+8 : base+12])
+		if idOffset < 0 || idOffset+idLen > len(idsBlob) {
+			return nil, ErrInvalidArgument
+		}
+		hits[i] = &vectorindex.SearchHit{
+			Index: indexName,
+			ID:    string(idsBlob[idOffset : idOffset+idLen]),
+			Score: math.Float32frombits(scoreBits),
+		}
+	}
+	return &vectorindex.SearchResult{
+		Hits:  hits,
+		Total: uint64(totalHits),
+		Status: &vectorindex.SearchStatus{
+			Total:      uint64(totalHits),
+			Successful: len(hits),
+		},
+	}, nil
+}
+
+func (b *Bridge) SearchBleveResult(req SearchRequestPayload, original *bleve.SearchRequest) (*bleve.SearchResult, bool, error) {
+	if req.Mode != "full_text" && req.Mode != "sparse" {
+		return nil, false, nil
+	}
+	if req.IncludeStored || len(req.Aggregations) > 0 || len(req.GraphQueries) > 0 {
+		return nil, false, nil
+	}
+	if req.ReturnMode != "" && req.ReturnMode != "parent" {
+		return nil, false, nil
+	}
+
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return nil, false, err
+	}
+	var result C.AntflyDenseSearchResult
+	if err := mapError(C.antfly_db_search_hits_json(b.handle, toSlice(raw), &result)); err != nil {
+		return nil, false, err
+	}
+	defer C.antfly_db_dense_search_result_free(&result)
+
+	hits := make(bleveSearch.DocumentMatchCollection, 0, int(result.hit_count))
+	maxScore := 0.0
 	if result.hit_count > 0 {
 		rawHits := unsafe.Slice(result.hits_ptr, int(result.hit_count))
-		idsBlob := C.GoBytes(unsafe.Pointer(result.ids_ptr), C.int(result.ids_len))
-		for i, hit := range rawHits {
-			start := int(hit.id_offset)
-			end := start + int(hit.id_len)
-			hits[i] = &vectorindex.SearchHit{
-				Index: indexName,
-				ID:    string(idsBlob[start:end]),
-				Score: float32(hit.score),
+		for _, hit := range rawHits {
+			id := C.GoBytes(unsafe.Pointer(hit.id_ptr), C.int(hit.id_len))
+			score := float64(hit.score)
+			hits = append(hits, &bleveSearch.DocumentMatch{
+				ID:    string(id),
+				Score: score,
+			})
+			if score > maxScore {
+				maxScore = score
 			}
 		}
 	}
 
-	return &vectorindex.SearchResult{
-		Hits:  hits,
-		Total: uint64(result.total_hits),
-		Status: &vectorindex.SearchStatus{
-			Total:      uint64(result.total_hits),
-			Successful: len(hits),
+	return &bleve.SearchResult{
+		Status: &bleve.SearchStatus{
+			Total:      1,
+			Successful: 1,
+			Failed:     0,
 		},
-	}, nil
+		Request:  original,
+		Hits:     hits,
+		Total:    uint64(result.total_hits),
+		MaxScore: maxScore,
+		Took:     0,
+	}, true, nil
 }
 
 func (b *Bridge) searchHitsFast(req SearchRequestPayload) (*SearchResultPayload, bool, error) {

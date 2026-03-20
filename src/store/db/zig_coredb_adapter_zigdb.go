@@ -2954,13 +2954,25 @@ func executeNarrowedTextSearch(
 			return nil, nil, err
 		}
 		searchReq.Aggregations = aggregations
-		payload, err := bridge.Search(searchReq)
-		if err != nil {
-			return nil, nil, err
+		var zigAggResults []zbridge.SearchAggregationResultPayload
+		var bleveResult *bleve.SearchResult
+		if len(aggregations) == 0 {
+			if directResult, ok, err := bridge.SearchBleveResult(searchReq, req); err != nil {
+				return nil, nil, err
+			} else if ok {
+				bleveResult = directResult
+			}
 		}
-		bleveResult, err := decodeBleveSearchResult(payload, req)
-		if err != nil {
-			return nil, nil, err
+		if bleveResult == nil {
+			payload, err := bridge.Search(searchReq)
+			if err != nil {
+				return nil, nil, err
+			}
+			bleveResult, err = decodeBleveSearchResult(payload, req)
+			if err != nil {
+				return nil, nil, err
+			}
+			zigAggResults = payload.Aggregations
 		}
 		if filterQuery != nil {
 			if err := applyBleveFilterQuery(filterQuery, bleveResult); err != nil {
@@ -2970,7 +2982,7 @@ func executeNarrowedTextSearch(
 		if len(filterPrefix) > 0 {
 			applyBleveFilterPrefix(filterPrefix, bleveResult)
 		}
-		return bleveResult, payload.Aggregations, nil
+		return bleveResult, zigAggResults, nil
 	}
 
 	bleveResult, aggResults, err := fetchCompleteTextSearchResult(db, bridge, req, filterQuery, filterPrefix, aggregations)
