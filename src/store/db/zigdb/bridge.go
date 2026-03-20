@@ -31,6 +31,17 @@ typedef struct {
 } AntflyDenseSearchResult;
 
 typedef struct {
+	uint8_t* id_ptr;
+	size_t id_len;
+	uint64_t hash;
+} AntflyScanHashEntry;
+
+typedef struct {
+	AntflyScanHashEntry* entries_ptr;
+	size_t entry_count;
+} AntflyScanHashResult;
+
+typedef struct {
 	AntflySlice key;
 	AntflySlice value;
 	_Bool is_delete;
@@ -47,6 +58,7 @@ AntflyErrorCode antfly_db_open(const char* path, void** out_handle);
 void antfly_db_close(void* handle);
 void antfly_db_buffer_free(uint8_t* ptr, size_t len);
 void antfly_db_dense_search_result_free(AntflyDenseSearchResult* result);
+void antfly_db_scan_hash_result_free(AntflyScanHashResult* result);
 AntflyErrorCode antfly_db_batch(void* handle, const AntflyWriteIntent* writes, size_t write_count, const AntflyVersionPredicate* predicates, size_t predicate_count, uint64_t timestamp_ns, uint8_t sync_level);
 AntflyErrorCode antfly_db_begin_transaction_with_id(void* handle, const uint8_t (*txn_id)[16], uint64_t timestamp_ns, const AntflySlice* participants, size_t participant_count);
 AntflyErrorCode antfly_db_write_transaction(void* handle, const uint8_t (*txn_id)[16], const AntflyWriteIntent* writes, size_t write_count, const AntflyVersionPredicate* predicates, size_t predicate_count);
@@ -60,6 +72,7 @@ AntflyErrorCode antfly_db_set_schema_json(void* handle, AntflySlice schema_json)
 AntflyErrorCode antfly_db_extract_enrichments_json(void* handle, AntflySlice request_json, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_compute_enrichments_json(void* handle, AntflySlice request_json, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_scan_json(void* handle, AntflySlice request_json, AntflyBuffer* out_buf);
+AntflyErrorCode antfly_db_scan_hashes(void* handle, AntflySlice request_json, AntflyScanHashResult* out_result);
 AntflyErrorCode antfly_db_search_json(void* handle, AntflySlice request_json, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_search_hits_json(void* handle, AntflySlice request_json, AntflyDenseSearchResult* out_result);
 AntflyErrorCode antfly_db_search_dense(void* handle, AntflySlice index_name, const float* vector_ptr, size_t vector_len, uint32_t k, uint32_t limit, uint32_t offset, AntflyDenseSearchResult* out_result);
@@ -205,6 +218,11 @@ type ScanRequestPayload struct {
 type ScanHashPayload struct {
 	IDB64 string `json:"id_b64"`
 	Hash  uint64 `json:"hash"`
+}
+
+type ScanHashEntry struct {
+	ID   []byte
+	Hash uint64
 }
 
 type ScanDocumentPayload struct {
@@ -983,6 +1001,21 @@ func (b *Bridge) ListIndexes() ([]IndexConfigPayload, error) {
 }
 
 func (b *Bridge) Scan(req ScanRequestPayload) (*ScanResultPayload, error) {
+	if hashes, ok, err := b.scanHashesFast(req); err != nil {
+		return nil, err
+	} else if ok {
+		payload := &ScanResultPayload{
+			Hashes: make([]ScanHashPayload, 0, len(hashes)),
+		}
+		for _, item := range hashes {
+			payload.Hashes = append(payload.Hashes, ScanHashPayload{
+				IDB64: EncodeBase64(item.ID),
+				Hash:  item.Hash,
+			})
+		}
+		return payload, nil
+	}
+
 	raw, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
@@ -997,6 +1030,42 @@ func (b *Bridge) Scan(req ScanRequestPayload) (*ScanResultPayload, error) {
 		return nil, err
 	}
 	return &payload, nil
+}
+
+func (b *Bridge) scanHashesFast(req ScanRequestPayload) ([]ScanHashEntry, bool, error) {
+	if req.IncludeDocuments {
+		return nil, false, nil
+	}
+	if len(req.Fields) > 0 || !req.IncludeAllFields {
+		return nil, false, nil
+	}
+
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return nil, false, err
+	}
+	var result C.AntflyScanHashResult
+	if err := mapError(C.antfly_db_scan_hashes(b.handle, toSlice(raw), &result)); err != nil {
+		return nil, false, err
+	}
+	defer C.antfly_db_scan_hash_result_free(&result)
+
+	entries := make([]ScanHashEntry, 0, int(result.entry_count))
+	if result.entries_ptr == nil || result.entry_count == 0 {
+		return entries, true, nil
+	}
+	rawEntries := unsafe.Slice(result.entries_ptr, int(result.entry_count))
+	for _, entry := range rawEntries {
+		var id []byte
+		if entry.id_ptr != nil && entry.id_len > 0 {
+			id = C.GoBytes(unsafe.Pointer(entry.id_ptr), C.int(entry.id_len))
+		}
+		entries = append(entries, ScanHashEntry{
+			ID:   id,
+			Hash: uint64(entry.hash),
+		})
+	}
+	return entries, true, nil
 }
 
 func (b *Bridge) Search(req SearchRequestPayload) (*SearchResultPayload, error) {

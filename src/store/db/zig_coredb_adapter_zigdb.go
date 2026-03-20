@@ -371,7 +371,7 @@ func (db *ZigCoreDB) Get(_ context.Context, key []byte) (map[string]any, error) 
 		return nil, zigUnsupported("Get without open bridge")
 	}
 
-	buf, err := bridge.LookupJSON(key)
+	buf, err := bridge.GetRaw(key)
 	if err != nil {
 		if errors.Is(err, zbridge.ErrNotFound) {
 			return nil, ErrNotFound

@@ -543,6 +543,7 @@ type AggregationRequest struct {
 	// Bucket aggregation configuration
 	Size                  int                 `json:"size,omitzero"`
 	Precision             uint8               `json:"precision,omitzero"`
+	GeohashPrecision      int                 `json:"geohash_precision,omitzero"`
 	Interval              float64             `json:"interval,omitzero"`
 	CalendarInterval      string              `json:"calendar_interval,omitempty"`
 	FixedInterval         string              `json:"fixed_interval,omitempty"`
@@ -552,8 +553,13 @@ type AggregationRequest struct {
 	CenterLat             float64             `json:"center_lat,omitzero"`
 	CenterLon             float64             `json:"center_lon,omitzero"`
 	DistanceUnit          string              `json:"distance_unit,omitempty"`
-	GeohashPrecision      int                 `json:"geohash_precision,omitzero"`
 	SignificanceAlgorithm string              `json:"significance_algorithm,omitempty"`
+	BackgroundFilter      json.RawMessage     `json:"background_filter,omitempty"`
+	BucketPath            string              `json:"bucket_path,omitempty"`
+	BucketSortOrder       string              `json:"sort_order,omitempty"`
+	BucketFrom            int                 `json:"from,omitzero"`
+	PipelineWindow        int                 `json:"window,omitzero"`
+	PipelineGapPolicy     string              `json:"gap_policy,omitempty"`
 	TermPrefix            string              `json:"term_prefix,omitempty"`
 	TermPattern           string              `json:"term_pattern,omitempty"`
 	MinDocCount           int64               `json:"min_doc_count,omitzero"`
