@@ -3307,6 +3307,9 @@ func (s *DBImpl) Search(ctx context.Context, encodedReqest []byte) (resp []byte,
 	if len(encodedReqest) == 0 {
 		return nil, ErrEmptyRequest
 	}
+	if op, ok := searchWireOp(encodedReqest); ok {
+		return s.searchWireFastPath(ctx, encodedReqest, op)
+	}
 	res := indexes.RemoteIndexSearchResult{
 		VectorSearchResult: make(map[string]*vectorindex.SearchResult),
 	}
@@ -3692,6 +3695,102 @@ func (s *DBImpl) Search(ctx context.Context, encodedReqest []byte) (resp []byte,
 		return nil, fmt.Errorf("marshalling search result: %w", err)
 	}
 	return resp, nil
+}
+
+func (s *DBImpl) searchWireFastPath(ctx context.Context, encodedRequest []byte, op uint16) ([]byte, error) {
+	switch op {
+	case searchWireOpDenseKnn:
+		req, err := decodeSearchWireDenseRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		searchReq := &vectorindex.SearchRequest{
+			K:         int(req.K),
+			Embedding: req.Vector,
+		}
+		resp, err := s.routeSearch(ctx, req.IndexName, searchReq, nil)
+		if err != nil {
+			return nil, fmt.Errorf("searching vectorindex: %w", err)
+		}
+		result, ok := resp.(*vectorindex.SearchResult)
+		if !ok {
+			return nil, fmt.Errorf("unexpected response type from vector search: %T", resp)
+		}
+		return encodeSearchWireVectorResponse(result), nil
+	case searchWireOpTextMatch:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextTerm:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextMatchPhrase:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextQueryString:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	default:
+		return nil, fmt.Errorf("unsupported search wire op: %d", op)
+	}
+}
+
+func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []byte, op uint16) ([]byte, error) {
+	var (
+		textReq  searchWireTextMatchRequest
+		err      error
+		bleveReq *bleve.SearchRequest
+	)
+	switch op {
+	case searchWireOpTextMatch:
+		textReq, err = decodeSearchWireTextMatchRequest(encodedRequest)
+		if err == nil {
+			q := query.NewMatchQuery(textReq.Text)
+			q.SetField(textReq.Field)
+			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
+		}
+	case searchWireOpTextTerm:
+		textReq, err = decodeSearchWireTextTermRequest(encodedRequest)
+		if err == nil {
+			q := query.NewTermQuery(textReq.Text)
+			q.SetField(textReq.Field)
+			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
+		}
+	case searchWireOpTextMatchPhrase:
+		textReq, err = decodeSearchWireTextMatchPhraseRequest(encodedRequest)
+		if err == nil {
+			q := query.NewMatchPhraseQuery(textReq.Text)
+			q.SetField(textReq.Field)
+			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
+		}
+	case searchWireOpTextQueryString:
+		textReq, err = decodeSearchWireTextQueryStringRequest(encodedRequest)
+		if err == nil {
+			bleveReq = bleve.NewSearchRequestOptions(query.NewQueryStringQuery(textReq.Text), int(textReq.Limit), int(textReq.Offset), false)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported text wire op: %d", op)
+	}
+	if err != nil {
+		return nil, err
+	}
+	indexName := s.resolveWireSearchIndexName(textReq.IndexName)
+	resp, err := s.routeSearch(ctx, indexName, bleveReq, nil)
+	if err != nil {
+		return nil, fmt.Errorf("searching bleve: %w", err)
+	}
+	result, ok := resp.(*bleve.SearchResult)
+	if !ok {
+		return nil, fmt.Errorf("unexpected response type from bleve search: %T", resp)
+	}
+	return encodeSearchWireBleveResponseForOp(op, result), nil
+}
+
+func (s *DBImpl) resolveWireSearchIndexName(indexName string) string {
+	if indexName != "" && s.indexManager.HasIndex(indexName) {
+		return indexName
+	}
+	for _, candidate := range []string{"full_text_index_v0", "full_text_index"} {
+		if s.indexManager.HasIndex(candidate) {
+			return candidate
+		}
+	}
+	return indexName
 }
 
 // expandFilterIDsForChunks translates document-level filter IDs into the

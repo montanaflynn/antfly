@@ -52,6 +52,7 @@ const (
 	searchWireOpTextMatch       uint16 = searchwire.OpTextMatch
 	searchWireOpTextTerm        uint16 = searchwire.OpTextTerm
 	searchWireOpTextMatchPhrase uint16 = searchwire.OpTextMatchPhrase
+	searchWireOpTextQueryString uint16 = searchwire.OpTextQueryString
 )
 
 type FieldFilter struct {
@@ -980,6 +981,11 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 			return nil, 0, false
 		}
 		return encodeTextSearchWire(searchWireOpTextMatchPhrase, "full_text_index", typed.Field(), typed.MatchPhrase, uint32(req.Size), uint32(req.From)), searchWireOpTextMatchPhrase, true
+	case *query.QueryStringQuery:
+		if typed.Query == "" {
+			return nil, 0, false
+		}
+		return encodeTextSearchWire(searchWireOpTextQueryString, "full_text_index", "", typed.Query, uint32(req.Size), uint32(req.From)), searchWireOpTextQueryString, true
 	default:
 		return nil, 0, false
 	}

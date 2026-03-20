@@ -14,12 +14,14 @@ const (
 	searchWireOpTextMatch       uint16 = searchwire.OpTextMatch
 	searchWireOpTextTerm        uint16 = searchwire.OpTextTerm
 	searchWireOpTextMatchPhrase uint16 = searchwire.OpTextMatchPhrase
+	searchWireOpTextQueryString uint16 = searchwire.OpTextQueryString
 )
 
 type searchWireDenseRequest = searchwire.DenseRequest
 type searchWireTextMatchRequest = searchwire.TextRequest
 type searchWireTextTermRequest = searchwire.TextRequest
 type searchWireTextMatchPhraseRequest = searchwire.TextRequest
+type searchWireTextQueryStringRequest = searchwire.TextRequest
 type searchWireHit = searchwire.Hit
 
 var errSearchWireInvalid = searchwire.ErrInvalid
@@ -48,6 +50,10 @@ func encodeSearchWireTextMatchPhraseRequest(indexName, field, text string, limit
 	return searchwire.EncodeTextMatchPhraseRequest(indexName, field, text, limit, offset)
 }
 
+func encodeSearchWireTextQueryStringRequest(indexName, text string, limit, offset uint32) []byte {
+	return searchwire.EncodeTextQueryStringRequest(indexName, text, limit, offset)
+}
+
 func decodeSearchWireTextMatchRequest(raw []byte) (searchWireTextMatchRequest, error) {
 	return searchwire.DecodeTextRequest(raw, searchwire.OpTextMatch)
 }
@@ -58,6 +64,10 @@ func decodeSearchWireTextTermRequest(raw []byte) (searchWireTextTermRequest, err
 
 func decodeSearchWireTextMatchPhraseRequest(raw []byte) (searchWireTextMatchPhraseRequest, error) {
 	return searchwire.DecodeTextRequest(raw, searchwire.OpTextMatchPhrase)
+}
+
+func decodeSearchWireTextQueryStringRequest(raw []byte) (searchWireTextQueryStringRequest, error) {
+	return searchwire.DecodeTextRequest(raw, searchwire.OpTextQueryString)
 }
 
 func encodeSearchWireVectorResponse(result *vectorindex.SearchResult) []byte {

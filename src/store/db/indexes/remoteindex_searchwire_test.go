@@ -64,6 +64,39 @@ func TestRemoteIndexSearchInContext_UsesWireForSimpleMatch(t *testing.T) {
 	require.InDelta(t, 1.0, res.Hits[0].Score, 1e-6)
 }
 
+func TestRemoteIndexSearchInContext_UsesWireForQueryString(t *testing.T) {
+	req := bleve.NewSearchRequestOptions(query.NewQueryStringQuery(`body:hello`), 10, 0, false)
+
+	client := &http.Client{Transport: remoteIndexRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Helper()
+		require.Equal(t, searchWireContentType, r.Header.Get("Content-Type"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Equal(t, searchWireMagic, binary.LittleEndian.Uint32(body[0:4]))
+		require.Equal(t, searchWireOpTextQueryString, binary.LittleEndian.Uint16(body[6:8]))
+
+		header := make(http.Header)
+		header.Set("Content-Type", searchWireContentType)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body: io.NopCloser(bytes.NewReader(makeRemoteIndexWireResponse(searchWireOpTextQueryString, 1, []remoteIndexWireHit{
+				{id: "doc-1", score: 1.0},
+			}))),
+		}, nil
+	})}
+
+	idx, err := NewRemoteIndex(client, []string{"http://wire-search"}, types.ID(1))
+	require.NoError(t, err)
+
+	res, err := idx.SearchInContext(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, uint64(1), res.Total)
+	require.Len(t, res.Hits, 1)
+	require.Equal(t, "doc-1", res.Hits[0].ID)
+}
+
 func TestRemoteIndexRemoteSearch_UsesWireForDense(t *testing.T) {
 	client := &http.Client{Transport: remoteIndexRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		t.Helper()

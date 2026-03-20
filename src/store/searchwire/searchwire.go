@@ -19,6 +19,7 @@ const (
 	OpTextMatch       uint16 = 2
 	OpTextTerm        uint16 = 3
 	OpTextMatchPhrase uint16 = 4
+	OpTextQueryString uint16 = 5
 )
 
 var ErrInvalid = errors.New("invalid search wire payload")
@@ -131,6 +132,10 @@ func EncodeTextTermRequest(indexName, field, text string, limit, offset uint32) 
 
 func EncodeTextMatchPhraseRequest(indexName, field, text string, limit, offset uint32) []byte {
 	return EncodeTextRequest(OpTextMatchPhrase, indexName, field, text, limit, offset)
+}
+
+func EncodeTextQueryStringRequest(indexName, text string, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextQueryString, indexName, "", text, limit, offset)
 }
 
 func EncodeTextRequest(op uint16, indexName, field, text string, limit, offset uint32) []byte {
