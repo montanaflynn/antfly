@@ -31,6 +31,20 @@ typedef struct {
 } AntflyDenseSearchResult;
 
 typedef struct {
+	size_t id_offset;
+	size_t id_len;
+	float score;
+} AntflyPackedDenseSearchHit;
+
+typedef struct {
+	AntflyPackedDenseSearchHit* hits_ptr;
+	size_t hit_count;
+	uint32_t total_hits;
+	uint8_t* ids_ptr;
+	size_t ids_len;
+} AntflyPackedDenseSearchResult;
+
+typedef struct {
 	uint8_t* id_ptr;
 	size_t id_len;
 	uint64_t hash;
@@ -58,6 +72,7 @@ AntflyErrorCode antfly_db_open(const char* path, void** out_handle);
 void antfly_db_close(void* handle);
 void antfly_db_buffer_free(uint8_t* ptr, size_t len);
 void antfly_db_dense_search_result_free(AntflyDenseSearchResult* result);
+void antfly_db_packed_dense_search_result_free(AntflyPackedDenseSearchResult* result);
 void antfly_db_scan_hash_result_free(AntflyScanHashResult* result);
 AntflyErrorCode antfly_db_batch(void* handle, const AntflyWriteIntent* writes, size_t write_count, const AntflyVersionPredicate* predicates, size_t predicate_count, uint64_t timestamp_ns, uint8_t sync_level);
 AntflyErrorCode antfly_db_begin_transaction_with_id(void* handle, const uint8_t (*txn_id)[16], uint64_t timestamp_ns, const AntflySlice* participants, size_t participant_count);
@@ -75,7 +90,7 @@ AntflyErrorCode antfly_db_scan_json(void* handle, AntflySlice request_json, Antf
 AntflyErrorCode antfly_db_scan_hashes(void* handle, AntflySlice request_json, AntflyScanHashResult* out_result);
 AntflyErrorCode antfly_db_search_json(void* handle, AntflySlice request_json, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_search_hits_json(void* handle, AntflySlice request_json, AntflyDenseSearchResult* out_result);
-AntflyErrorCode antfly_db_search_dense(void* handle, AntflySlice index_name, const float* vector_ptr, size_t vector_len, uint32_t k, uint32_t limit, uint32_t offset, AntflyDenseSearchResult* out_result);
+AntflyErrorCode antfly_db_search_dense(void* handle, AntflySlice index_name, const float* vector_ptr, size_t vector_len, uint32_t k, uint32_t limit, uint32_t offset, AntflyPackedDenseSearchResult* out_result);
 AntflyErrorCode antfly_db_execute_graph_queries_json(void* handle, AntflySlice request_json, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_aggregate_hits_json(void* handle, AntflySlice request_json, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_stats_json(void* handle, AntflyBuffer* out_buf);
@@ -1107,7 +1122,7 @@ func (b *Bridge) searchDenseFast(req SearchRequestPayload) (*SearchResultPayload
 		return nil, false, nil
 	}
 
-	var result C.AntflyDenseSearchResult
+	var result C.AntflyPackedDenseSearchResult
 	var vecPtr *C.float
 	if len(req.Vector) > 0 {
 		vecPtr = (*C.float)(unsafe.Pointer(&req.Vector[0]))
@@ -1124,24 +1139,11 @@ func (b *Bridge) searchDenseFast(req SearchRequestPayload) (*SearchResultPayload
 	)); err != nil {
 		return nil, false, err
 	}
-	defer C.antfly_db_dense_search_result_free(&result)
-
-	hits := make([]SearchHitPayload, int(result.hit_count))
-	if result.hit_count > 0 {
-		rawHits := unsafe.Slice(result.hits_ptr, int(result.hit_count))
-		for i, hit := range rawHits {
-			id := C.GoBytes(unsafe.Pointer(hit.id_ptr), C.int(hit.id_len))
-			score := float32(hit.score)
-			hits[i] = SearchHitPayload{
-				IDRaw: id,
-				Score: &score,
-			}
-		}
-	}
+	defer C.antfly_db_packed_dense_search_result_free(&result)
 
 	return &SearchResultPayload{
 		TotalHits: uint32(result.total_hits),
-		Hits:      hits,
+		Hits:      decodePackedDenseFastHits(result),
 	}, true, nil
 }
 
@@ -1166,23 +1168,46 @@ func (b *Bridge) searchHitsFast(req SearchRequestPayload) (*SearchResultPayload,
 	}
 	defer C.antfly_db_dense_search_result_free(&result)
 
-	hits := make([]SearchHitPayload, int(result.hit_count))
-	if result.hit_count > 0 {
-		rawHits := unsafe.Slice(result.hits_ptr, int(result.hit_count))
-		for i, hit := range rawHits {
-			id := C.GoBytes(unsafe.Pointer(hit.id_ptr), C.int(hit.id_len))
-			score := float32(hit.score)
-			hits[i] = SearchHitPayload{
-				IDRaw: id,
-				Score: &score,
-			}
-		}
-	}
-
 	return &SearchResultPayload{
 		TotalHits: uint32(result.total_hits),
-		Hits:      hits,
+		Hits:      decodeDenseFastHits(result),
 	}, true, nil
+}
+
+func decodePackedDenseFastHits(result C.AntflyPackedDenseSearchResult) []SearchHitPayload {
+	hits := make([]SearchHitPayload, int(result.hit_count))
+	if result.hit_count == 0 {
+		return hits
+	}
+	rawHits := unsafe.Slice(result.hits_ptr, int(result.hit_count))
+	idsBlob := C.GoBytes(unsafe.Pointer(result.ids_ptr), C.int(result.ids_len))
+	for i, hit := range rawHits {
+		start := int(hit.id_offset)
+		end := start + int(hit.id_len)
+		score := float32(hit.score)
+		hits[i] = SearchHitPayload{
+			IDRaw: idsBlob[start:end:end],
+			Score: &score,
+		}
+	}
+	return hits
+}
+
+func decodeDenseFastHits(result C.AntflyDenseSearchResult) []SearchHitPayload {
+	hits := make([]SearchHitPayload, int(result.hit_count))
+	if result.hit_count == 0 {
+		return hits
+	}
+	rawHits := unsafe.Slice(result.hits_ptr, int(result.hit_count))
+	for i, hit := range rawHits {
+		id := C.GoBytes(unsafe.Pointer(hit.id_ptr), C.int(hit.id_len))
+		score := float32(hit.score)
+		hits[i] = SearchHitPayload{
+			IDRaw: id,
+			Score: &score,
+		}
+	}
+	return hits
 }
 
 func (b *Bridge) ExecuteGraphQueries(req ExecuteGraphQueriesRequestPayload) ([]SearchGraphResultPayload, error) {
