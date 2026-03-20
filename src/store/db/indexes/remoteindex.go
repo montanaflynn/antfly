@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -41,6 +42,16 @@ import (
 	"github.com/blevesearch/bleve/v2/search"
 	"github.com/blevesearch/bleve/v2/search/query"
 	bleveindex "github.com/blevesearch/bleve_index_api"
+)
+
+const (
+	searchWireContentType              = "application/x-antfly-search-wire"
+	searchWireMagic             uint32 = 0x41464442
+	searchWireVersion           uint16 = 1
+	searchWireOpDenseKnn        uint16 = 1
+	searchWireOpTextMatch       uint16 = 2
+	searchWireOpTextTerm        uint16 = 3
+	searchWireOpTextMatchPhrase uint16 = 4
 )
 
 type FieldFilter struct {
@@ -645,9 +656,16 @@ func (r *RemoteIndex) RemoteSearch(
 		version = r.schema.Version
 	}
 	req.FullTextIndexVersion = version
-	reqBytes, err := json.Marshal(req)
+	reqBytes, contentType, decodeWire, ok, err := encodeRemoteSearchRequest(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal search request: %w", err)
+		return nil, err
+	}
+	if !ok {
+		reqBytes, err = json.Marshal(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal search request: %w", err)
+		}
+		contentType = "application/json"
 	}
 
 	// FIXME (ajr) Try failing over to other URLs if the first one fails
@@ -660,7 +678,7 @@ func (r *RemoteIndex) RemoteSearch(
 	if err != nil {
 		return nil, fmt.Errorf("creating search request: %w", err)
 	}
-	hreq.Header.Set("Content-Type", "application/json")
+	hreq.Header.Set("Content-Type", contentType)
 	hreq = hreq.WithContext(ctx)
 
 	resp, err := r.client.Do(hreq) //nolint:gosec // G704: HTTP client calling configured endpoint
@@ -672,6 +690,17 @@ func (r *RemoteIndex) RemoteSearch(
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("searching error: %s, body: %s", resp.Status, string(bodyBytes))
+	}
+	if contentType == searchWireContentType {
+		respBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("reading binary search result: %w", err)
+		}
+		result, err := decodeWire(respBytes)
+		if err != nil {
+			return nil, fmt.Errorf("decoding binary search result: %w", err)
+		}
+		return result, nil
 	}
 	decoder := json.NewDecoder(resp.Body)
 	var result RemoteIndexSearchResult
@@ -847,9 +876,16 @@ func (r *RemoteIndex) SearchInContext(
 			riReq.Columns = r.q.Fields
 		}
 	}
-	reqBytes, err := json.Marshal(riReq)
+	reqBytes, contentType, decodeWire, ok, err := encodeRemoteSearchRequest(&riReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal search request: %w", err)
+		return nil, err
+	}
+	if !ok {
+		reqBytes, err = json.Marshal(riReq)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal search request: %w", err)
+		}
+		contentType = "application/json"
 	}
 
 	// FIXME (ajr) Try failing over to other URLs if the first one fails
@@ -862,7 +898,7 @@ func (r *RemoteIndex) SearchInContext(
 	if err != nil {
 		return nil, fmt.Errorf("creating search request: %w", err)
 	}
-	hreq.Header.Set("Content-Type", "application/json")
+	hreq.Header.Set("Content-Type", contentType)
 
 	resp, err := r.client.Do(hreq) //nolint:gosec // G704: HTTP client calling configured endpoint
 	if err != nil {
@@ -874,6 +910,17 @@ func (r *RemoteIndex) SearchInContext(
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("searching error: %s, body: %s", resp.Status, string(bodyBytes))
 	}
+	if contentType == searchWireContentType {
+		respBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("reading binary search result: %w", err)
+		}
+		result, err := decodeWire(respBytes)
+		if err != nil {
+			return nil, fmt.Errorf("decoding binary search result: %w", err)
+		}
+		return result.BleveSearchResult, nil
+	}
 	decoder := json.NewDecoder(resp.Body)
 	var result RemoteIndexSearchResult
 	if err := decoder.Decode(&result); err != nil {
@@ -881,6 +928,218 @@ func (r *RemoteIndex) SearchInContext(
 	}
 
 	return result.BleveSearchResult, nil
+}
+
+func encodeRemoteSearchRequest(req *RemoteIndexSearchRequest) ([]byte, string, func([]byte) (*RemoteIndexSearchResult, error), bool, error) {
+	if req == nil {
+		return nil, "", nil, false, nil
+	}
+	if req.Columns != nil || req.CountStar || req.Star || len(req.FilterPrefix) > 0 || len(req.FilterQuery) > 0 ||
+		len(req.AggregationRequests) > 0 || req.RerankerConfig != nil || req.RerankerTemplate != "" ||
+		req.RerankerField != "" || req.RerankerQuery != "" || len(req.GraphSearches) > 0 || req.MergeConfig != nil ||
+		req.ExpandStrategy != "" || len(req.SparseSearches) > 0 {
+		return nil, "", nil, false, nil
+	}
+	if len(req.VectorSearches) == 1 && req.BleveSearchRequest == nil && len(req.VectorPagingOpts.OrderBy) == 0 &&
+		req.VectorPagingOpts.DistanceOver == nil && req.VectorPagingOpts.DistanceUnder == nil {
+		for indexName, vec := range req.VectorSearches {
+			body := encodeDenseSearchWire(indexName, vec, uint32(req.Limit), uint32(req.Limit), 0)
+			return body, searchWireContentType, func(raw []byte) (*RemoteIndexSearchResult, error) {
+				return decodeDenseSearchResult(indexName, raw)
+			}, true, nil
+		}
+	}
+	if req.BleveSearchRequest != nil && len(req.VectorSearches) == 0 &&
+		len(req.BlevePagingOpts.OrderBy) == 0 && len(req.BlevePagingOpts.SearchAfter) == 0 && len(req.BlevePagingOpts.SearchBefore) == 0 {
+		if body, op, ok := encodeSimpleTextSearchWire(req.BleveSearchRequest); ok {
+			return body, searchWireContentType, func(raw []byte) (*RemoteIndexSearchResult, error) {
+				return decodeTextSearchResult(op, req.BleveSearchRequest, raw)
+			}, true, nil
+		}
+	}
+	return nil, "", nil, false, nil
+}
+
+func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool) {
+	if req == nil || req.Query == nil || req.Size <= 0 || req.From < 0 {
+		return nil, 0, false
+	}
+	switch typed := req.Query.(type) {
+	case *query.MatchQuery:
+		if typed.Field() == "" || typed.Match == "" {
+			return nil, 0, false
+		}
+		return encodeTextSearchWire(searchWireOpTextMatch, "full_text_index", typed.Field(), typed.Match, uint32(req.Size), uint32(req.From)), searchWireOpTextMatch, true
+	case *query.TermQuery:
+		if typed.Field() == "" || typed.Term == "" {
+			return nil, 0, false
+		}
+		return encodeTextSearchWire(searchWireOpTextTerm, "full_text_index", typed.Field(), typed.Term, uint32(req.Size), uint32(req.From)), searchWireOpTextTerm, true
+	case *query.MatchPhraseQuery:
+		if typed.Field() == "" || typed.MatchPhrase == "" {
+			return nil, 0, false
+		}
+		return encodeTextSearchWire(searchWireOpTextMatchPhrase, "full_text_index", typed.Field(), typed.MatchPhrase, uint32(req.Size), uint32(req.From)), searchWireOpTextMatchPhrase, true
+	default:
+		return nil, 0, false
+	}
+}
+
+func encodeDenseSearchWire(indexName string, vector []float32, k, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2
+	out := make([]byte, headerLen+len(indexName)+len(vector)*4)
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], searchWireMagic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], searchWireVersion)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], searchWireOpDenseKnn)
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], 0)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], k)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(vector)))
+	cursor += 2
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	for _, value := range vector {
+		binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(value))
+		cursor += 4
+	}
+	return out
+}
+
+func encodeTextSearchWire(op uint16, indexName, field, text string, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4
+	out := make([]byte, headerLen+len(indexName)+len(field)+len(text))
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], searchWireMagic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], searchWireVersion)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], op)
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], 0)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], uint32(len(text)))
+	cursor += 4
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	copy(out[cursor:], field)
+	cursor += len(field)
+	copy(out[cursor:], text)
+	return out
+}
+
+func decodeDenseSearchResult(indexName string, raw []byte) (*RemoteIndexSearchResult, error) {
+	totalHits, hits, err := decodeSearchWireHits(raw, searchWireOpDenseKnn)
+	if err != nil {
+		return nil, err
+	}
+	result := &vectorindex.SearchResult{
+		Hits:  make([]*vectorindex.SearchHit, len(hits)),
+		Total: uint64(totalHits),
+		Status: &vectorindex.SearchStatus{
+			Total:      uint64(totalHits),
+			Successful: len(hits),
+		},
+	}
+	for i, hit := range hits {
+		result.Hits[i] = &vectorindex.SearchHit{
+			Index:    indexName,
+			ID:       hit.id,
+			Distance: hit.score,
+			Score:    hit.score,
+		}
+	}
+	return &RemoteIndexSearchResult{
+		Total: totalHits,
+		VectorSearchResult: map[string]*vectorindex.SearchResult{
+			indexName: result,
+		},
+	}, nil
+}
+
+func decodeTextSearchResult(op uint16, req *bleve.SearchRequest, raw []byte) (*RemoteIndexSearchResult, error) {
+	totalHits, hits, err := decodeSearchWireHits(raw, op)
+	if err != nil {
+		return nil, err
+	}
+	docHits := make(search.DocumentMatchCollection, len(hits))
+	maxScore := 0.0
+	for i, hit := range hits {
+		score := float64(hit.score)
+		docHits[i] = &search.DocumentMatch{ID: hit.id, Score: score}
+		if score > maxScore {
+			maxScore = score
+		}
+	}
+	return &RemoteIndexSearchResult{
+		Total: totalHits,
+		BleveSearchResult: &bleve.SearchResult{
+			Status:   &bleve.SearchStatus{Total: 1, Successful: 1},
+			Request:  req,
+			Hits:     docHits,
+			Total:    totalHits,
+			MaxScore: maxScore,
+		},
+	}, nil
+}
+
+type searchWireDecodedHit struct {
+	id    string
+	score float32
+}
+
+func decodeSearchWireHits(raw []byte, expectedOp uint16) (uint64, []searchWireDecodedHit, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4
+	const hitLen = 4 + 2 + 2 + 4
+	if len(raw) < headerLen {
+		return 0, nil, fmt.Errorf("invalid search wire response")
+	}
+	if binary.LittleEndian.Uint32(raw[0:4]) != searchWireMagic ||
+		binary.LittleEndian.Uint16(raw[4:6]) != searchWireVersion ||
+		binary.LittleEndian.Uint16(raw[6:8]) != expectedOp {
+		return 0, nil, fmt.Errorf("invalid search wire response")
+	}
+	totalHits := binary.LittleEndian.Uint32(raw[8:12])
+	hitCount := int(binary.LittleEndian.Uint32(raw[12:16]))
+	idsLen := int(binary.LittleEndian.Uint32(raw[16:20]))
+	if len(raw) < headerLen+hitCount*hitLen+idsLen {
+		return 0, nil, fmt.Errorf("invalid search wire response")
+	}
+	hitsStart := headerLen
+	idsStart := headerLen + hitCount*hitLen
+	idsBlob := raw[idsStart : idsStart+idsLen]
+	hits := make([]searchWireDecodedHit, hitCount)
+	for i := 0; i < hitCount; i++ {
+		base := hitsStart + i*hitLen
+		idOffset := int(binary.LittleEndian.Uint32(raw[base : base+4]))
+		idLen := int(binary.LittleEndian.Uint16(raw[base+4 : base+6]))
+		if idOffset < 0 || idOffset+idLen > len(idsBlob) {
+			return 0, nil, fmt.Errorf("invalid search wire response")
+		}
+		hits[i] = searchWireDecodedHit{
+			id:    string(idsBlob[idOffset : idOffset+idLen]),
+			score: math.Float32frombits(binary.LittleEndian.Uint32(raw[base+8 : base+12])),
+		}
+	}
+	return uint64(totalHits), hits, nil
 }
 
 func (r *RemoteIndex) IndexSynonym(

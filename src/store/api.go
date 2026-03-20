@@ -43,6 +43,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const searchWireContentType = "application/x-antfly-search-wire"
+
 // API handler for a http based key-value store backed by raft
 type StoreAPI struct {
 	logger       *zap.Logger
@@ -981,6 +983,30 @@ func (h *StoreAPI) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	shard, _ := h.store.Shard(shardID)
+	contentType := r.Header.Get("Content-Type")
+
+	if strings.HasPrefix(contentType, searchWireContentType) {
+		resp, err := shard.Search(r.Context(), body)
+		if err != nil {
+			h.logger.Error("Failed to execute binary search on shard",
+				zap.Stringer("shardID", shardID),
+				zap.Error(err))
+			http.Error(
+				w,
+				fmt.Sprintf("Failed to execute search: %v", err),
+				http.StatusInternalServerError,
+			)
+			return
+		}
+		w.Header().Set("Content-Type", searchWireContentType)
+		if _, err := w.Write(resp); err != nil {
+			h.logger.Error("Failed to write binary search response for shard",
+				zap.Stringer("shardID", shardID),
+				zap.Error(err))
+			http.Error(w, "Failed to write search response", http.StatusInternalServerError)
+		}
+		return
+	}
 
 	// Detect if this is ndjson (multiple JSON objects) by checking for newline-separated objects
 	// ndjson has multiple JSON objects separated by newlines

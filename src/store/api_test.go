@@ -739,6 +739,31 @@ func TestHandleSearch_PreservesSyntheticCompositeSortSentinel(t *testing.T) {
 	mockShard.AssertExpectations(t)
 }
 
+func TestHandleSearch_BinaryWirePassthrough(t *testing.T) {
+	api, mockStore, _ := setupStoreAPI(t, types.ID(1))
+	shardID := types.ID(303)
+	mockShard := &MockShard{}
+
+	reqBody := []byte{0x41, 0x46, 0x44, 0x42, 0x01, 0x00, 0x01, 0x00, 0xaa, 0xbb, 0xcc}
+	respBody := []byte{0x41, 0x46, 0x44, 0x42, 0x01, 0x00, 0x01, 0x00, 0x10, 0x20}
+
+	mockStore.On("Shard", shardID).Return(mockShard, true)
+	mockShard.On("Search", mock.Anything, reqBody).Return(respBody, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/search", bytes.NewReader(reqBody))
+	req.Header.Set("X-Raft-Shard-Id", shardID.String())
+	req.Header.Set("Content-Type", searchWireContentType)
+
+	rr := httptest.NewRecorder()
+	api.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	require.Equal(t, searchWireContentType, rr.Header().Get("Content-Type"))
+	require.Equal(t, respBody, rr.Body.Bytes())
+	mockStore.AssertExpectations(t)
+	mockShard.AssertExpectations(t)
+}
+
 func TestHandleStartShard_Success_JSON(t *testing.T) {
 	api, mockStore, _ := setupStoreAPI(t, types.ID(1)) // Store Node ID 1
 	newShardID := types.ID(100)
