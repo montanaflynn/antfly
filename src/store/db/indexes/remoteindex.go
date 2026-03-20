@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -37,6 +36,7 @@ import (
 	"github.com/antflydb/antfly/lib/vectorindex"
 	json "github.com/antflydb/antfly/pkg/libaf/json"
 	"github.com/antflydb/antfly/src/common"
+	"github.com/antflydb/antfly/src/store/searchwire"
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search"
@@ -45,13 +45,13 @@ import (
 )
 
 const (
-	searchWireContentType              = "application/x-antfly-search-wire"
-	searchWireMagic             uint32 = 0x41464442
-	searchWireVersion           uint16 = 1
-	searchWireOpDenseKnn        uint16 = 1
-	searchWireOpTextMatch       uint16 = 2
-	searchWireOpTextTerm        uint16 = 3
-	searchWireOpTextMatchPhrase uint16 = 4
+	searchWireContentType              = searchwire.ContentType
+	searchWireMagic             uint32 = searchwire.Magic
+	searchWireVersion           uint16 = searchwire.Version
+	searchWireOpDenseKnn        uint16 = searchwire.OpDenseKnn
+	searchWireOpTextMatch       uint16 = searchwire.OpTextMatch
+	searchWireOpTextTerm        uint16 = searchwire.OpTextTerm
+	searchWireOpTextMatchPhrase uint16 = searchwire.OpTextMatchPhrase
 )
 
 type FieldFilter struct {
@@ -986,64 +986,11 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 }
 
 func encodeDenseSearchWire(indexName string, vector []float32, k, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2
-	out := make([]byte, headerLen+len(indexName)+len(vector)*4)
-	cursor := 0
-	binary.LittleEndian.PutUint32(out[cursor:], searchWireMagic)
-	cursor += 4
-	binary.LittleEndian.PutUint16(out[cursor:], searchWireVersion)
-	cursor += 2
-	binary.LittleEndian.PutUint16(out[cursor:], searchWireOpDenseKnn)
-	cursor += 2
-	binary.LittleEndian.PutUint32(out[cursor:], 0)
-	cursor += 4
-	binary.LittleEndian.PutUint32(out[cursor:], k)
-	cursor += 4
-	binary.LittleEndian.PutUint32(out[cursor:], limit)
-	cursor += 4
-	binary.LittleEndian.PutUint32(out[cursor:], offset)
-	cursor += 4
-	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
-	cursor += 2
-	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(vector)))
-	cursor += 2
-	copy(out[cursor:], indexName)
-	cursor += len(indexName)
-	for _, value := range vector {
-		binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(value))
-		cursor += 4
-	}
-	return out
+	return searchwire.EncodeDenseRequest(indexName, vector, k, limit, offset)
 }
 
 func encodeTextSearchWire(op uint16, indexName, field, text string, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4
-	out := make([]byte, headerLen+len(indexName)+len(field)+len(text))
-	cursor := 0
-	binary.LittleEndian.PutUint32(out[cursor:], searchWireMagic)
-	cursor += 4
-	binary.LittleEndian.PutUint16(out[cursor:], searchWireVersion)
-	cursor += 2
-	binary.LittleEndian.PutUint16(out[cursor:], op)
-	cursor += 2
-	binary.LittleEndian.PutUint32(out[cursor:], 0)
-	cursor += 4
-	binary.LittleEndian.PutUint32(out[cursor:], limit)
-	cursor += 4
-	binary.LittleEndian.PutUint32(out[cursor:], offset)
-	cursor += 4
-	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
-	cursor += 2
-	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
-	cursor += 2
-	binary.LittleEndian.PutUint32(out[cursor:], uint32(len(text)))
-	cursor += 4
-	copy(out[cursor:], indexName)
-	cursor += len(indexName)
-	copy(out[cursor:], field)
-	cursor += len(field)
-	copy(out[cursor:], text)
-	return out
+	return searchwire.EncodeTextRequest(op, indexName, field, text, limit, offset)
 }
 
 func decodeDenseSearchResult(indexName string, raw []byte) (*RemoteIndexSearchResult, error) {
@@ -1107,39 +1054,15 @@ type searchWireDecodedHit struct {
 }
 
 func decodeSearchWireHits(raw []byte, expectedOp uint16) (uint64, []searchWireDecodedHit, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4
-	const hitLen = 4 + 2 + 2 + 4
-	if len(raw) < headerLen {
+	totalHits, decoded, err := searchwire.DecodeHits(raw, expectedOp)
+	if err != nil {
 		return 0, nil, fmt.Errorf("invalid search wire response")
 	}
-	if binary.LittleEndian.Uint32(raw[0:4]) != searchWireMagic ||
-		binary.LittleEndian.Uint16(raw[4:6]) != searchWireVersion ||
-		binary.LittleEndian.Uint16(raw[6:8]) != expectedOp {
-		return 0, nil, fmt.Errorf("invalid search wire response")
+	hits := make([]searchWireDecodedHit, len(decoded))
+	for i, hit := range decoded {
+		hits[i] = searchWireDecodedHit{id: hit.ID, score: hit.Score}
 	}
-	totalHits := binary.LittleEndian.Uint32(raw[8:12])
-	hitCount := int(binary.LittleEndian.Uint32(raw[12:16]))
-	idsLen := int(binary.LittleEndian.Uint32(raw[16:20]))
-	if len(raw) < headerLen+hitCount*hitLen+idsLen {
-		return 0, nil, fmt.Errorf("invalid search wire response")
-	}
-	hitsStart := headerLen
-	idsStart := headerLen + hitCount*hitLen
-	idsBlob := raw[idsStart : idsStart+idsLen]
-	hits := make([]searchWireDecodedHit, hitCount)
-	for i := 0; i < hitCount; i++ {
-		base := hitsStart + i*hitLen
-		idOffset := int(binary.LittleEndian.Uint32(raw[base : base+4]))
-		idLen := int(binary.LittleEndian.Uint16(raw[base+4 : base+6]))
-		if idOffset < 0 || idOffset+idLen > len(idsBlob) {
-			return 0, nil, fmt.Errorf("invalid search wire response")
-		}
-		hits[i] = searchWireDecodedHit{
-			id:    string(idsBlob[idOffset : idOffset+idLen]),
-			score: math.Float32frombits(binary.LittleEndian.Uint32(raw[base+8 : base+12])),
-		}
-	}
-	return uint64(totalHits), hits, nil
+	return totalHits, hits, nil
 }
 
 func (r *RemoteIndex) IndexSynonym(

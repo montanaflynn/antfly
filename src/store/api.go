@@ -36,6 +36,7 @@ import (
 	"github.com/antflydb/antfly/src/raft"
 	"github.com/antflydb/antfly/src/store/db"
 	"github.com/antflydb/antfly/src/store/db/indexes"
+	"github.com/antflydb/antfly/src/store/searchwire"
 	"github.com/minio/minio-go/v7"
 	"go.etcd.io/raft/v3/raftpb"
 	"go.uber.org/zap"
@@ -43,7 +44,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const searchWireContentType = "application/x-antfly-search-wire"
+const searchWireContentType = searchwire.ContentType
 
 // API handler for a http based key-value store backed by raft
 type StoreAPI struct {
