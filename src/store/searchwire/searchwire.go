@@ -21,6 +21,9 @@ const (
 	OpTextMatchPhrase uint16 = 4
 	OpTextQueryString uint16 = 5
 	OpTextBool        uint16 = 6
+	OpTextPrefix      uint16 = 7
+	OpTextWildcard    uint16 = 8
+	OpTextRegexp      uint16 = 9
 )
 
 var ErrInvalid = errors.New("invalid search wire payload")
@@ -152,6 +155,18 @@ func EncodeTextMatchPhraseRequest(indexName, field, text string, limit, offset u
 
 func EncodeTextQueryStringRequest(indexName, text string, limit, offset uint32) []byte {
 	return EncodeTextRequest(OpTextQueryString, indexName, "", text, limit, offset)
+}
+
+func EncodeTextPrefixRequest(indexName, field, text string, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextPrefix, indexName, field, text, limit, offset)
+}
+
+func EncodeTextWildcardRequest(indexName, field, text string, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextWildcard, indexName, field, text, limit, offset)
+}
+
+func EncodeTextRegexpRequest(indexName, field, text string, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextRegexp, indexName, field, text, limit, offset)
 }
 
 func EncodeTextBoolRequest(indexName string, must, should, mustNot []TextClause, limit, offset uint32) []byte {
@@ -453,6 +468,8 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 func validClauseOp(op uint16) bool {
 	switch op {
 	case OpTextMatch, OpTextTerm, OpTextMatchPhrase, OpTextQueryString:
+		return true
+	case OpTextPrefix, OpTextWildcard, OpTextRegexp:
 		return true
 	default:
 		return false

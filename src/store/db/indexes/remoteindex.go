@@ -54,6 +54,9 @@ const (
 	searchWireOpTextMatchPhrase uint16 = searchwire.OpTextMatchPhrase
 	searchWireOpTextQueryString uint16 = searchwire.OpTextQueryString
 	searchWireOpTextBool        uint16 = searchwire.OpTextBool
+	searchWireOpTextPrefix      uint16 = searchwire.OpTextPrefix
+	searchWireOpTextWildcard    uint16 = searchwire.OpTextWildcard
+	searchWireOpTextRegexp      uint16 = searchwire.OpTextRegexp
 )
 
 type FieldFilter struct {
@@ -987,6 +990,21 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 			return nil, 0, false
 		}
 		return encodeTextSearchWire(searchWireOpTextQueryString, "full_text_index", "", typed.Query, uint32(req.Size), uint32(req.From)), searchWireOpTextQueryString, true
+	case *query.PrefixQuery:
+		if typed.Field() == "" || typed.Prefix == "" {
+			return nil, 0, false
+		}
+		return encodeTextSearchWire(searchWireOpTextPrefix, "full_text_index", typed.Field(), typed.Prefix, uint32(req.Size), uint32(req.From)), searchWireOpTextPrefix, true
+	case *query.WildcardQuery:
+		if typed.Field() == "" || typed.Wildcard == "" {
+			return nil, 0, false
+		}
+		return encodeTextSearchWire(searchWireOpTextWildcard, "full_text_index", typed.Field(), typed.Wildcard, uint32(req.Size), uint32(req.From)), searchWireOpTextWildcard, true
+	case *query.RegexpQuery:
+		if typed.Field() == "" || typed.Regexp == "" {
+			return nil, 0, false
+		}
+		return encodeTextSearchWire(searchWireOpTextRegexp, "full_text_index", typed.Field(), typed.Regexp, uint32(req.Size), uint32(req.From)), searchWireOpTextRegexp, true
 	case *query.BooleanQuery:
 		if body, ok := encodeBoolTextSearchWire("full_text_index", typed, uint32(req.Size), uint32(req.From)); ok {
 			return body, searchWireOpTextBool, true
@@ -1109,6 +1127,21 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			return searchwire.TextClause{}, false
 		}
 		return searchwire.TextClause{Op: searchWireOpTextQueryString, Text: typed.Query}, true
+	case *query.PrefixQuery:
+		if typed.Field() == "" || typed.Prefix == "" {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{Op: searchWireOpTextPrefix, Field: typed.Field(), Text: typed.Prefix}, true
+	case *query.WildcardQuery:
+		if typed.Field() == "" || typed.Wildcard == "" {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{Op: searchWireOpTextWildcard, Field: typed.Field(), Text: typed.Wildcard}, true
+	case *query.RegexpQuery:
+		if typed.Field() == "" || typed.Regexp == "" {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{Op: searchWireOpTextRegexp, Field: typed.Field(), Text: typed.Regexp}, true
 	default:
 		return searchwire.TextClause{}, false
 	}

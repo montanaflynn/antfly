@@ -929,6 +929,42 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 			return nil, err
 		}
 		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextPrefix:
+		req, err := decodeSearchWireTextPrefixRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		bleveReq := bleve.NewSearchRequestOptions(blevequery.NewPrefixQuery(req.Text), int(req.Limit), int(req.Offset), false)
+		bleveReq.Query.(*blevequery.PrefixQuery).SetField(req.Field)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextWildcard:
+		req, err := decodeSearchWireTextWildcardRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		bleveReq := bleve.NewSearchRequestOptions(blevequery.NewWildcardQuery(req.Text), int(req.Limit), int(req.Offset), false)
+		bleveReq.Query.(*blevequery.WildcardQuery).SetField(req.Field)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextRegexp:
+		req, err := decodeSearchWireTextRegexpRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		bleveReq := bleve.NewSearchRequestOptions(blevequery.NewRegexpQuery(req.Text), int(req.Limit), int(req.Offset), false)
+		bleveReq.Query.(*blevequery.RegexpQuery).SetField(req.Field)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
 	default:
 		return nil, zigUnsupported("Search wire op not implemented")
 	}

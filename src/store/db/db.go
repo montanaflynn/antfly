@@ -3727,6 +3727,12 @@ func (s *DBImpl) searchWireFastPath(ctx context.Context, encodedRequest []byte, 
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	case searchWireOpTextBool:
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextPrefix:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextWildcard:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextRegexp:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	default:
 		return nil, fmt.Errorf("unsupported search wire op: %d", op)
 	}
@@ -3781,6 +3787,30 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		}
 		bleveReq = bleve.NewSearchRequestOptions(boolQuery, int(boolReq.Limit), int(boolReq.Offset), false)
 		indexName = boolReq.IndexName
+	case searchWireOpTextPrefix:
+		textReq, err = decodeSearchWireTextPrefixRequest(encodedRequest)
+		if err == nil {
+			q := query.NewPrefixQuery(textReq.Text)
+			q.SetField(textReq.Field)
+			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
+			indexName = textReq.IndexName
+		}
+	case searchWireOpTextWildcard:
+		textReq, err = decodeSearchWireTextWildcardRequest(encodedRequest)
+		if err == nil {
+			q := query.NewWildcardQuery(textReq.Text)
+			q.SetField(textReq.Field)
+			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
+			indexName = textReq.IndexName
+		}
+	case searchWireOpTextRegexp:
+		textReq, err = decodeSearchWireTextRegexpRequest(encodedRequest)
+		if err == nil {
+			q := query.NewRegexpQuery(textReq.Text)
+			q.SetField(textReq.Field)
+			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
+			indexName = textReq.IndexName
+		}
 	default:
 		return nil, fmt.Errorf("unsupported text wire op: %d", op)
 	}
@@ -3846,6 +3876,18 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 		return q, nil
 	case searchWireOpTextQueryString:
 		return query.NewQueryStringQuery(clause.Text), nil
+	case searchWireOpTextPrefix:
+		q := query.NewPrefixQuery(clause.Text)
+		q.SetField(clause.Field)
+		return q, nil
+	case searchWireOpTextWildcard:
+		q := query.NewWildcardQuery(clause.Text)
+		q.SetField(clause.Field)
+		return q, nil
+	case searchWireOpTextRegexp:
+		q := query.NewRegexpQuery(clause.Text)
+		q.SetField(clause.Field)
+		return q, nil
 	default:
 		return nil, errSearchWireInvalid
 	}
