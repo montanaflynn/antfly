@@ -58,6 +58,8 @@ const (
 	searchWireOpTextWildcard    uint16 = searchwire.OpTextWildcard
 	searchWireOpTextRegexp      uint16 = searchwire.OpTextRegexp
 	searchWireOpTextFuzzy       uint16 = searchwire.OpTextFuzzy
+	searchWireOpTextMatchAll    uint16 = searchwire.OpTextMatchAll
+	searchWireOpTextMatchNone   uint16 = searchwire.OpTextMatchNone
 )
 
 type FieldFilter struct {
@@ -1011,6 +1013,10 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 			return nil, 0, false
 		}
 		return searchwire.EncodeTextFuzzyRequest("full_text_index", typed.Field(), typed.Term, uint16(typed.Prefix), uint16(typed.Fuzziness), false, uint32(req.Size), uint32(req.From)), searchWireOpTextFuzzy, true
+	case *query.MatchAllQuery:
+		return searchwire.EncodeTextMatchAllRequest("full_text_index", uint32(req.Size), uint32(req.From)), searchWireOpTextMatchAll, true
+	case *query.MatchNoneQuery:
+		return searchwire.EncodeTextMatchNoneRequest("full_text_index", uint32(req.Size), uint32(req.From)), searchWireOpTextMatchNone, true
 	case *query.BooleanQuery:
 		if body, ok := encodeBoolTextSearchWire("full_text_index", typed, uint32(req.Size), uint32(req.From)); ok {
 			return body, searchWireOpTextBool, true
@@ -1148,6 +1154,17 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			return searchwire.TextClause{}, false
 		}
 		return searchwire.TextClause{Op: searchWireOpTextRegexp, Field: typed.Field(), Text: typed.Regexp}, true
+	case *query.FuzzyQuery:
+		if typed.Field() == "" || typed.Term == "" {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{
+			Op:        searchWireOpTextFuzzy,
+			Field:     typed.Field(),
+			Text:      typed.Term,
+			Prefix:    uint16(typed.Prefix),
+			Fuzziness: uint16(typed.Fuzziness),
+		}, true
 	default:
 		return searchwire.TextClause{}, false
 	}

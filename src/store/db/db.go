@@ -3735,6 +3735,10 @@ func (s *DBImpl) searchWireFastPath(ctx context.Context, encodedRequest []byte, 
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	case searchWireOpTextFuzzy:
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextMatchAll:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextMatchNone:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	default:
 		return nil, fmt.Errorf("unsupported search wire op: %d", op)
 	}
@@ -3828,6 +3832,18 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		}
 		bleveReq = bleve.NewSearchRequestOptions(q, int(fuzzyReq.Limit), int(fuzzyReq.Offset), false)
 		indexName = fuzzyReq.IndexName
+	case searchWireOpTextMatchAll:
+		textReq, err = decodeSearchWireTextMatchAllRequest(encodedRequest)
+		if err == nil {
+			bleveReq = bleve.NewSearchRequestOptions(query.NewMatchAllQuery(), int(textReq.Limit), int(textReq.Offset), false)
+			indexName = textReq.IndexName
+		}
+	case searchWireOpTextMatchNone:
+		textReq, err = decodeSearchWireTextMatchNoneRequest(encodedRequest)
+		if err == nil {
+			bleveReq = bleve.NewSearchRequestOptions(query.NewMatchNoneQuery(), int(textReq.Limit), int(textReq.Offset), false)
+			indexName = textReq.IndexName
+		}
 	default:
 		return nil, fmt.Errorf("unsupported text wire op: %d", op)
 	}
@@ -3904,6 +3920,16 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 	case searchWireOpTextRegexp:
 		q := query.NewRegexpQuery(clause.Text)
 		q.SetField(clause.Field)
+		return q, nil
+	case searchWireOpTextFuzzy:
+		q := query.NewFuzzyQuery(clause.Text)
+		q.SetField(clause.Field)
+		q.SetPrefix(int(clause.Prefix))
+		if clause.Auto {
+			q.SetAutoFuzziness(true)
+		} else {
+			q.SetFuzziness(int(clause.Fuzziness))
+		}
 		return q, nil
 	default:
 		return nil, errSearchWireInvalid

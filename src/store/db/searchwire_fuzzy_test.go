@@ -61,3 +61,51 @@ func TestSearchWireFuzzyFastPath(t *testing.T) {
 	require.Len(t, hits, 1)
 	require.Equal(t, "doc-1", hits[0].ID)
 }
+
+func TestSearchWireMatchAllAndMatchNoneFastPath(t *testing.T) {
+	dir := t.TempDir()
+	db := &DBImpl{logger: zaptest.NewLogger(t)}
+	require.NoError(t, db.Open(dir, false, nil, types.Range{nil, []byte{0xFF}}))
+	defer db.Close()
+
+	tableSchema := &schema.TableSchema{
+		DefaultType: "default",
+		DocumentSchemas: map[string]schema.DocumentSchema{
+			"default": {
+				Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"body": map[string]any{"type": "string"},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, db.UpdateSchema(tableSchema))
+	require.NoError(t, db.AddIndex(*indexes.NewFullTextIndexConfig("full_text_index_v0", false)))
+
+	ctx := context.Background()
+	payload, err := json.Marshal(map[string]any{"body": "hello world"})
+	require.NoError(t, err)
+	err = db.Batch(ctx, [][2][]byte{{[]byte("doc-1"), payload}}, nil, Op_SyncLevelFullText)
+	if err != nil && !errors.Is(err, ErrPartialSuccess) {
+		require.NoError(t, err)
+	}
+
+	matchAllBytes := encodeSearchWireTextMatchAllRequest("full_text_index", 10, 0)
+	matchAllRes, err := db.Search(ctx, matchAllBytes)
+	require.NoError(t, err)
+	matchAllTotal, matchAllHits, err := searchwire.DecodeHits(matchAllRes, searchWireOpTextMatchAll)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), matchAllTotal)
+	require.Len(t, matchAllHits, 1)
+	require.Equal(t, "doc-1", matchAllHits[0].ID)
+
+	matchNoneBytes := encodeSearchWireTextMatchNoneRequest("full_text_index", 10, 0)
+	matchNoneRes, err := db.Search(ctx, matchNoneBytes)
+	require.NoError(t, err)
+	matchNoneTotal, matchNoneHits, err := searchwire.DecodeHits(matchNoneRes, searchWireOpTextMatchNone)
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), matchNoneTotal)
+	require.Len(t, matchNoneHits, 0)
+}

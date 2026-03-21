@@ -25,6 +25,8 @@ const (
 	OpTextWildcard    uint16 = 8
 	OpTextRegexp      uint16 = 9
 	OpTextFuzzy       uint16 = 10
+	OpTextMatchAll    uint16 = 11
+	OpTextMatchNone   uint16 = 12
 )
 
 var ErrInvalid = errors.New("invalid search wire payload")
@@ -46,9 +48,12 @@ type TextRequest struct {
 }
 
 type TextClause struct {
-	Op    uint16
-	Field string
-	Text  string
+	Op        uint16
+	Field     string
+	Text      string
+	Prefix    uint16
+	Fuzziness uint16
+	Auto      bool
 }
 
 type TextBoolRequest struct {
@@ -218,6 +223,14 @@ func EncodeTextFuzzyRequest(indexName, field, text string, prefix, fuzziness uin
 	cursor += len(field)
 	copy(out[cursor:], text)
 	return out
+}
+
+func EncodeTextMatchAllRequest(indexName string, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextMatchAll, indexName, "", "", limit, offset)
+}
+
+func EncodeTextMatchNoneRequest(indexName string, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextMatchNone, indexName, "", "", limit, offset)
 }
 
 func EncodeTextBoolRequest(indexName string, must, should, mustNot []TextClause, limit, offset uint32) []byte {
@@ -507,6 +520,9 @@ func encodedClausesLen(clauses []TextClause) int {
 	total := 0
 	for _, clause := range clauses {
 		total += 2 + 2 + 4 + len(clause.Field) + len(clause.Text)
+		if clause.Op == OpTextFuzzy {
+			total += 2 + 2 + 1
+		}
 	}
 	return total
 }
@@ -519,6 +535,16 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 		*cursor += 2
 		binary.LittleEndian.PutUint32(out[*cursor:], uint32(len(clause.Text)))
 		*cursor += 4
+		if clause.Op == OpTextFuzzy {
+			binary.LittleEndian.PutUint16(out[*cursor:], clause.Prefix)
+			*cursor += 2
+			binary.LittleEndian.PutUint16(out[*cursor:], clause.Fuzziness)
+			*cursor += 2
+			if clause.Auto {
+				out[*cursor] = 1
+			}
+			*cursor += 1
+		}
 		copy(out[*cursor:], clause.Field)
 		*cursor += len(clause.Field)
 		copy(out[*cursor:], clause.Text)
@@ -541,6 +567,20 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 		cursor += 2
 		textLen := int(binary.LittleEndian.Uint32(raw[cursor : cursor+4]))
 		cursor += 4
+		var prefix uint16
+		var fuzziness uint16
+		var auto bool
+		if op == OpTextFuzzy {
+			if len(raw) < cursor+5 {
+				return nil, 0, ErrInvalid
+			}
+			prefix = binary.LittleEndian.Uint16(raw[cursor : cursor+2])
+			cursor += 2
+			fuzziness = binary.LittleEndian.Uint16(raw[cursor : cursor+2])
+			cursor += 2
+			auto = raw[cursor] != 0
+			cursor += 1
+		}
 		if len(raw) < cursor+fieldLen+textLen {
 			return nil, 0, ErrInvalid
 		}
@@ -548,7 +588,7 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 		cursor += fieldLen
 		text := string(raw[cursor : cursor+textLen])
 		cursor += textLen
-		clauses[i] = TextClause{Op: op, Field: field, Text: text}
+		clauses[i] = TextClause{Op: op, Field: field, Text: text, Prefix: prefix, Fuzziness: fuzziness, Auto: auto}
 	}
 	return clauses, cursor, nil
 }
@@ -558,6 +598,8 @@ func validClauseOp(op uint16) bool {
 	case OpTextMatch, OpTextTerm, OpTextMatchPhrase, OpTextQueryString:
 		return true
 	case OpTextPrefix, OpTextWildcard, OpTextRegexp:
+		return true
+	case OpTextFuzzy:
 		return true
 	default:
 		return false
