@@ -4099,6 +4099,28 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 			q.SetFuzziness(int(clause.Fuzziness))
 		}
 		return q, nil
+	case searchWireOpTextPhrase:
+		if len(clause.Terms) == 0 {
+			return nil, errSearchWireInvalid
+		}
+		q := query.NewPhraseQuery(clause.Terms, clause.Field)
+		if clause.Auto {
+			q.SetAutoFuzziness(true)
+		} else if clause.Fuzziness != 0 {
+			q.SetFuzziness(int(clause.Fuzziness))
+		}
+		return q, nil
+	case searchWireOpTextMultiPhrase:
+		if len(clause.TermSets) == 0 {
+			return nil, errSearchWireInvalid
+		}
+		q := query.NewMultiPhraseQuery(clause.TermSets, clause.Field)
+		if clause.Auto {
+			q.SetAutoFuzziness(true)
+		} else if clause.Fuzziness != 0 {
+			q.SetFuzziness(int(clause.Fuzziness))
+		}
+		return q, nil
 	case searchWireOpTextQueryString:
 		return query.NewQueryStringQuery(clause.Text), nil
 	case searchWireOpTextPrefix:

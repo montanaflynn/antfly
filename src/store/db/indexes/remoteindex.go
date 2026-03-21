@@ -1429,6 +1429,40 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Fuzziness: fuzziness,
 			Auto:      auto,
 		}, true
+	case *query.PhraseQuery:
+		if typed.Field() == "" || len(typed.Terms) == 0 {
+			return searchwire.TextClause{}, false
+		}
+		fuzziness, auto, ok := searchWirePhraseFuzziness(typed)
+		if !ok {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{
+			Op:        searchWireOpTextPhrase,
+			Field:     typed.Field(),
+			Fuzziness: fuzziness,
+			Auto:      auto,
+			Terms:     append([]string(nil), typed.Terms...),
+		}, true
+	case *query.MultiPhraseQuery:
+		if typed.Field() == "" || len(typed.Terms) == 0 {
+			return searchwire.TextClause{}, false
+		}
+		fuzziness, auto, ok := searchWirePhraseFuzziness(typed)
+		if !ok {
+			return searchwire.TextClause{}, false
+		}
+		termSets := make([][]string, len(typed.Terms))
+		for i, set := range typed.Terms {
+			termSets[i] = append([]string(nil), set...)
+		}
+		return searchwire.TextClause{
+			Op:        searchWireOpTextMultiPhrase,
+			Field:     typed.Field(),
+			Fuzziness: fuzziness,
+			Auto:      auto,
+			TermSets:  termSets,
+		}, true
 	case *query.QueryStringQuery:
 		if typed.Query == "" {
 			return searchwire.TextClause{}, false
