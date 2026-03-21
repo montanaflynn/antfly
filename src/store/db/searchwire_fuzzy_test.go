@@ -275,3 +275,114 @@ func TestSearchWireGeoFastPaths(t *testing.T) {
 	require.Equal(t, uint64(2), polygonTotal)
 	require.Len(t, polygonHits, 2)
 }
+
+func TestSearchWireTermRangeFastPath(t *testing.T) {
+	dir := t.TempDir()
+	db := &DBImpl{logger: zaptest.NewLogger(t)}
+	require.NoError(t, db.Open(dir, false, nil, types.Range{nil, []byte{0xFF}}))
+	defer db.Close()
+
+	tableSchema := &schema.TableSchema{
+		DefaultType: "default",
+		DocumentSchemas: map[string]schema.DocumentSchema{
+			"default": {
+				Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"title": map[string]any{"type": "string"},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, db.UpdateSchema(tableSchema))
+	require.NoError(t, db.AddIndex(*indexes.NewFullTextIndexConfig("full_text_index_v0", false)))
+
+	ctx := context.Background()
+	for key, doc := range map[string]map[string]any{
+		"doc-1": {"title": "alpha"},
+		"doc-2": {"title": "beta"},
+		"doc-3": {"title": "gamma"},
+	} {
+		payload, err := json.Marshal(doc)
+		require.NoError(t, err)
+		err = db.Batch(ctx, [][2][]byte{{[]byte(key), payload}}, nil, Op_SyncLevelFullText)
+		if err != nil && !errors.Is(err, ErrPartialSuccess) {
+			require.NoError(t, err)
+		}
+	}
+
+	inclusiveMin := true
+	inclusiveMax := false
+	reqBytes := encodeSearchWireTextTermRangeRequest("full_text_index", "title", "beta", "gamma", &inclusiveMin, &inclusiveMax, 10, 0)
+	resBytes, err := db.Search(ctx, reqBytes)
+	require.NoError(t, err)
+	total, hits, err := searchwire.DecodeHits(resBytes, searchWireOpTextTermRange)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), total)
+	require.Len(t, hits, 1)
+	require.Equal(t, "doc-2", hits[0].ID)
+}
+
+func TestSearchWireDocIDBoolFieldAndIPRangeFastPaths(t *testing.T) {
+	dir := t.TempDir()
+	db := &DBImpl{logger: zaptest.NewLogger(t)}
+	require.NoError(t, db.Open(dir, false, nil, types.Range{nil, []byte{0xFF}}))
+	defer db.Close()
+
+	tableSchema := &schema.TableSchema{
+		DefaultType: "default",
+		DocumentSchemas: map[string]schema.DocumentSchema{
+			"default": {
+				Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"content": map[string]any{"type": "string"},
+						"active":  map[string]any{"type": "boolean"},
+						"ip":      map[string]any{"type": "string", "x-antfly-types": []any{"ip"}},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, db.UpdateSchema(tableSchema))
+	require.NoError(t, db.AddIndex(*indexes.NewFullTextIndexConfig("full_text_index_v0", false)))
+
+	ctx := context.Background()
+	for key, doc := range map[string]map[string]any{
+		"doc-1": {"content": "alpha beta", "active": true, "ip": "192.168.1.10"},
+		"doc-2": {"content": "beta gamma", "active": false, "ip": "192.168.1.99"},
+		"doc-3": {"content": "gamma delta", "active": true, "ip": "10.0.0.5"},
+	} {
+		payload, err := json.Marshal(doc)
+		require.NoError(t, err)
+		err = db.Batch(ctx, [][2][]byte{{[]byte(key), payload}}, nil, Op_SyncLevelFullText)
+		if err != nil && !errors.Is(err, ErrPartialSuccess) {
+			require.NoError(t, err)
+		}
+	}
+
+	docIDBytes := encodeSearchWireTextDocIDRequest([]string{"doc-1", "doc-3"}, 10, 0)
+	docIDRes, err := db.Search(ctx, docIDBytes)
+	require.NoError(t, err)
+	docIDTotal, docIDHits, err := searchwire.DecodeHits(docIDRes, searchWireOpTextDocID)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), docIDTotal)
+	require.Len(t, docIDHits, 2)
+
+	boolBytes := encodeSearchWireTextBoolFieldRequest("full_text_index", "active", true, 10, 0)
+	boolRes, err := db.Search(ctx, boolBytes)
+	require.NoError(t, err)
+	boolTotal, boolHits, err := searchwire.DecodeHits(boolRes, searchWireOpTextBoolField)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), boolTotal)
+	require.Len(t, boolHits, 2)
+
+	ipBytes := encodeSearchWireTextIPRangeRequest("full_text_index", "ip", "192.168.1.0/24", 10, 0)
+	ipRes, err := db.Search(ctx, ipBytes)
+	require.NoError(t, err)
+	ipTotal, ipHits, err := searchwire.DecodeHits(ipRes, searchWireOpTextIPRange)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), ipTotal)
+	require.Len(t, ipHits, 2)
+}

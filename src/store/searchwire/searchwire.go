@@ -33,6 +33,10 @@ const (
 	OpTextGeoDistance  uint16 = 15
 	OpTextGeoBBox      uint16 = 16
 	OpTextGeoPolygon   uint16 = 17
+	OpTextTermRange    uint16 = 18
+	OpTextDocID        uint16 = 19
+	OpTextBoolField    uint16 = 20
+	OpTextIPRange      uint16 = 21
 )
 
 var ErrInvalid = errors.New("invalid search wire payload")
@@ -130,6 +134,39 @@ type TextGeoBoundingPolygonRequest struct {
 	IndexName string
 	Field     string
 	Points    []blevegeo.Point
+	Limit     uint32
+	Offset    uint32
+}
+
+type TextTermRangeRequest struct {
+	IndexName    string
+	Field        string
+	Min          string
+	Max          string
+	InclusiveMin *bool
+	InclusiveMax *bool
+	Limit        uint32
+	Offset       uint32
+}
+
+type TextDocIDRequest struct {
+	IDs    []string
+	Limit  uint32
+	Offset uint32
+}
+
+type TextBoolFieldRequest struct {
+	IndexName string
+	Field     string
+	Value     bool
+	Limit     uint32
+	Offset    uint32
+}
+
+type TextIPRangeRequest struct {
+	IndexName string
+	Field     string
+	CIDR      string
 	Limit     uint32
 	Offset    uint32
 }
@@ -491,6 +528,145 @@ func EncodeTextGeoBoundingPolygonRequest(indexName, field string, points []bleve
 		binary.LittleEndian.PutUint64(out[cursor:], math.Float64bits(point.Lat))
 		cursor += 8
 	}
+	return out
+}
+
+func EncodeTextTermRangeRequest(indexName, field, min, max string, inclusiveMin, inclusiveMax *bool, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 4
+	out := make([]byte, headerLen+len(indexName)+len(field)+len(min)+len(max))
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], Magic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], Version)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], OpTextTermRange)
+	cursor += 2
+	var flags uint32
+	if inclusiveMin != nil {
+		flags |= 1 << 0
+		if *inclusiveMin {
+			flags |= 1 << 1
+		}
+	}
+	if inclusiveMax != nil {
+		flags |= 1 << 2
+		if *inclusiveMax {
+			flags |= 1 << 3
+		}
+	}
+	binary.LittleEndian.PutUint32(out[cursor:], flags)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], uint32(len(min)))
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], uint32(len(max)))
+	cursor += 4
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	copy(out[cursor:], field)
+	cursor += len(field)
+	copy(out[cursor:], min)
+	cursor += len(min)
+	copy(out[cursor:], max)
+	return out
+}
+
+func EncodeTextDocIDRequest(ids []string, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2
+	totalIDsLen := 0
+	for _, id := range ids {
+		totalIDsLen += 2 + len(id)
+	}
+	out := make([]byte, headerLen+totalIDsLen)
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], Magic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], Version)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], OpTextDocID)
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], 0)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(ids)))
+	cursor += 2
+	for _, id := range ids {
+		binary.LittleEndian.PutUint16(out[cursor:], uint16(len(id)))
+		cursor += 2
+		copy(out[cursor:], id)
+		cursor += len(id)
+	}
+	return out
+}
+
+func EncodeTextBoolFieldRequest(indexName, field string, value bool, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 1 + 1
+	out := make([]byte, headerLen+len(indexName)+len(field))
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], Magic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], Version)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], OpTextBoolField)
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], 0)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
+	cursor += 2
+	if value {
+		out[cursor] = 1
+	}
+	cursor += 1
+	cursor += 1
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	copy(out[cursor:], field)
+	return out
+}
+
+func EncodeTextIPRangeRequest(indexName, field, cidr string, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4
+	out := make([]byte, headerLen+len(indexName)+len(field)+len(cidr))
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], Magic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], Version)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], OpTextIPRange)
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], 0)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], uint32(len(cidr)))
+	cursor += 4
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	copy(out[cursor:], field)
+	cursor += len(field)
+	copy(out[cursor:], cidr)
 	return out
 }
 
@@ -879,6 +1055,142 @@ func DecodeTextGeoBoundingPolygonRequest(raw []byte) (TextGeoBoundingPolygonRequ
 		IndexName: indexName,
 		Field:     field,
 		Points:    points,
+		Limit:     limit,
+		Offset:    offset,
+	}, nil
+}
+
+func DecodeTextTermRangeRequest(raw []byte) (TextTermRangeRequest, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 4
+	if len(raw) < headerLen {
+		return TextTermRangeRequest{}, ErrInvalid
+	}
+	if op, ok := Op(raw); !ok || op != OpTextTermRange {
+		return TextTermRangeRequest{}, ErrInvalid
+	}
+	flags := binary.LittleEndian.Uint32(raw[8:12])
+	limit := binary.LittleEndian.Uint32(raw[12:16])
+	offset := binary.LittleEndian.Uint32(raw[16:20])
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
+	minLen := int(binary.LittleEndian.Uint32(raw[24:28]))
+	maxLen := int(binary.LittleEndian.Uint32(raw[28:32]))
+	if len(raw) < headerLen+indexNameLen+fieldLen+minLen+maxLen {
+		return TextTermRangeRequest{}, ErrInvalid
+	}
+	cursor := headerLen
+	indexName := string(raw[cursor : cursor+indexNameLen])
+	cursor += indexNameLen
+	field := string(raw[cursor : cursor+fieldLen])
+	cursor += fieldLen
+	min := string(raw[cursor : cursor+minLen])
+	cursor += minLen
+	max := string(raw[cursor : cursor+maxLen])
+	var inclusiveMin *bool
+	var inclusiveMax *bool
+	if flags&(1<<0) != 0 {
+		value := flags&(1<<1) != 0
+		inclusiveMin = &value
+	}
+	if flags&(1<<2) != 0 {
+		value := flags&(1<<3) != 0
+		inclusiveMax = &value
+	}
+	return TextTermRangeRequest{
+		IndexName:    indexName,
+		Field:        field,
+		Min:          min,
+		Max:          max,
+		InclusiveMin: inclusiveMin,
+		InclusiveMax: inclusiveMax,
+		Limit:        limit,
+		Offset:       offset,
+	}, nil
+}
+
+func DecodeTextDocIDRequest(raw []byte) (TextDocIDRequest, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2
+	if len(raw) < headerLen {
+		return TextDocIDRequest{}, ErrInvalid
+	}
+	if op, ok := Op(raw); !ok || op != OpTextDocID {
+		return TextDocIDRequest{}, ErrInvalid
+	}
+	limit := binary.LittleEndian.Uint32(raw[12:16])
+	offset := binary.LittleEndian.Uint32(raw[16:20])
+	count := int(binary.LittleEndian.Uint16(raw[20:22]))
+	cursor := headerLen
+	ids := make([]string, count)
+	for i := 0; i < count; i++ {
+		if len(raw) < cursor+2 {
+			return TextDocIDRequest{}, ErrInvalid
+		}
+		idLen := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
+		cursor += 2
+		if len(raw) < cursor+idLen {
+			return TextDocIDRequest{}, ErrInvalid
+		}
+		ids[i] = string(raw[cursor : cursor+idLen])
+		cursor += idLen
+	}
+	return TextDocIDRequest{IDs: ids, Limit: limit, Offset: offset}, nil
+}
+
+func DecodeTextBoolFieldRequest(raw []byte) (TextBoolFieldRequest, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 1 + 1
+	if len(raw) < headerLen {
+		return TextBoolFieldRequest{}, ErrInvalid
+	}
+	if op, ok := Op(raw); !ok || op != OpTextBoolField {
+		return TextBoolFieldRequest{}, ErrInvalid
+	}
+	limit := binary.LittleEndian.Uint32(raw[12:16])
+	offset := binary.LittleEndian.Uint32(raw[16:20])
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
+	value := raw[24] != 0
+	if len(raw) < headerLen+indexNameLen+fieldLen {
+		return TextBoolFieldRequest{}, ErrInvalid
+	}
+	cursor := headerLen
+	indexName := string(raw[cursor : cursor+indexNameLen])
+	cursor += indexNameLen
+	field := string(raw[cursor : cursor+fieldLen])
+	return TextBoolFieldRequest{
+		IndexName: indexName,
+		Field:     field,
+		Value:     value,
+		Limit:     limit,
+		Offset:    offset,
+	}, nil
+}
+
+func DecodeTextIPRangeRequest(raw []byte) (TextIPRangeRequest, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4
+	if len(raw) < headerLen {
+		return TextIPRangeRequest{}, ErrInvalid
+	}
+	if op, ok := Op(raw); !ok || op != OpTextIPRange {
+		return TextIPRangeRequest{}, ErrInvalid
+	}
+	limit := binary.LittleEndian.Uint32(raw[12:16])
+	offset := binary.LittleEndian.Uint32(raw[16:20])
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
+	cidrLen := int(binary.LittleEndian.Uint32(raw[24:28]))
+	if len(raw) < headerLen+indexNameLen+fieldLen+cidrLen {
+		return TextIPRangeRequest{}, ErrInvalid
+	}
+	cursor := headerLen
+	indexName := string(raw[cursor : cursor+indexNameLen])
+	cursor += indexNameLen
+	field := string(raw[cursor : cursor+fieldLen])
+	cursor += fieldLen
+	cidr := string(raw[cursor : cursor+cidrLen])
+	return TextIPRangeRequest{
+		IndexName: indexName,
+		Field:     field,
+		CIDR:      cidr,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil

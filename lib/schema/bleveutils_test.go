@@ -91,6 +91,14 @@ func TestTranslateTemplateFieldMapping(t *testing.T) {
 			wantIndex: true,
 		},
 		{
+			name: "ip type",
+			input: TemplateFieldMapping{
+				Type: AntflyTypeIP,
+			},
+			wantType:  "IP",
+			wantIndex: true,
+		},
+		{
 			name: "html type with analyzer",
 			input: TemplateFieldMapping{
 				Type: AntflyTypeHtml,

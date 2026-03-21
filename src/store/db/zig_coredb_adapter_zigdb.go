@@ -1076,6 +1076,56 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 			return nil, err
 		}
 		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextTermRange:
+		req, err := decodeSearchWireTextTermRangeRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		q := blevequery.NewTermRangeInclusiveQuery(req.Min, req.Max, req.InclusiveMin, req.InclusiveMax)
+		q.SetField(req.Field)
+		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextDocID:
+		req, err := decodeSearchWireTextDocIDRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		bleveReq := bleve.NewSearchRequestOptions(blevequery.NewDocIDQuery(req.IDs), int(req.Limit), int(req.Offset), false)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextBoolField:
+		req, err := decodeSearchWireTextBoolFieldRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		q := blevequery.NewBoolFieldQuery(req.Value)
+		q.SetField(req.Field)
+		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextIPRange:
+		req, err := decodeSearchWireTextIPRangeRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		q := blevequery.NewIPRangeQuery(req.CIDR)
+		q.SetField(req.Field)
+		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
 	default:
 		return nil, zigUnsupported("Search wire op not implemented")
 	}

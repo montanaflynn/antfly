@@ -28,6 +28,10 @@ const (
 	searchWireOpTextGeoDistance  uint16 = searchwire.OpTextGeoDistance
 	searchWireOpTextGeoBBox      uint16 = searchwire.OpTextGeoBBox
 	searchWireOpTextGeoPolygon   uint16 = searchwire.OpTextGeoPolygon
+	searchWireOpTextTermRange    uint16 = searchwire.OpTextTermRange
+	searchWireOpTextDocID        uint16 = searchwire.OpTextDocID
+	searchWireOpTextBoolField    uint16 = searchwire.OpTextBoolField
+	searchWireOpTextIPRange      uint16 = searchwire.OpTextIPRange
 )
 
 type searchWireDenseRequest = searchwire.DenseRequest
@@ -44,6 +48,10 @@ type searchWireTextNumericRangeRequest = searchwire.TextNumericRangeRequest
 type searchWireTextGeoDistanceRequest = searchwire.TextGeoDistanceRequest
 type searchWireTextGeoBoundingBoxRequest = searchwire.TextGeoBoundingBoxRequest
 type searchWireTextGeoBoundingPolygonRequest = searchwire.TextGeoBoundingPolygonRequest
+type searchWireTextTermRangeRequest = searchwire.TextTermRangeRequest
+type searchWireTextDocIDRequest = searchwire.TextDocIDRequest
+type searchWireTextBoolFieldRequest = searchwire.TextBoolFieldRequest
+type searchWireTextIPRangeRequest = searchwire.TextIPRangeRequest
 type searchWireTextClause = searchwire.TextClause
 type searchWireTextBoolRequest = searchwire.TextBoolRequest
 type searchWireHit = searchwire.Hit
@@ -122,6 +130,22 @@ func encodeSearchWireTextGeoBoundingPolygonRequest(indexName, field string, poin
 	return searchwire.EncodeTextGeoBoundingPolygonRequest(indexName, field, points, limit, offset)
 }
 
+func encodeSearchWireTextTermRangeRequest(indexName, field, min, max string, inclusiveMin, inclusiveMax *bool, limit, offset uint32) []byte {
+	return searchwire.EncodeTextTermRangeRequest(indexName, field, min, max, inclusiveMin, inclusiveMax, limit, offset)
+}
+
+func encodeSearchWireTextDocIDRequest(ids []string, limit, offset uint32) []byte {
+	return searchwire.EncodeTextDocIDRequest(ids, limit, offset)
+}
+
+func encodeSearchWireTextBoolFieldRequest(indexName, field string, value bool, limit, offset uint32) []byte {
+	return searchwire.EncodeTextBoolFieldRequest(indexName, field, value, limit, offset)
+}
+
+func encodeSearchWireTextIPRangeRequest(indexName, field, cidr string, limit, offset uint32) []byte {
+	return searchwire.EncodeTextIPRangeRequest(indexName, field, cidr, limit, offset)
+}
+
 func encodeSearchWireTextBoolRequest(indexName string, must, should, mustNot []searchWireTextClause, limit, offset uint32) []byte {
 	return searchwire.EncodeTextBoolRequest(indexName, must, should, mustNot, limit, offset)
 }
@@ -184,6 +208,22 @@ func decodeSearchWireTextGeoBoundingBoxRequest(raw []byte) (searchWireTextGeoBou
 
 func decodeSearchWireTextGeoBoundingPolygonRequest(raw []byte) (searchWireTextGeoBoundingPolygonRequest, error) {
 	return searchwire.DecodeTextGeoBoundingPolygonRequest(raw)
+}
+
+func decodeSearchWireTextTermRangeRequest(raw []byte) (searchWireTextTermRangeRequest, error) {
+	return searchwire.DecodeTextTermRangeRequest(raw)
+}
+
+func decodeSearchWireTextDocIDRequest(raw []byte) (searchWireTextDocIDRequest, error) {
+	return searchwire.DecodeTextDocIDRequest(raw)
+}
+
+func decodeSearchWireTextBoolFieldRequest(raw []byte) (searchWireTextBoolFieldRequest, error) {
+	return searchwire.DecodeTextBoolFieldRequest(raw)
+}
+
+func decodeSearchWireTextIPRangeRequest(raw []byte) (searchWireTextIPRangeRequest, error) {
+	return searchwire.DecodeTextIPRangeRequest(raw)
 }
 
 func decodeSearchWireTextBoolRequest(raw []byte) (searchWireTextBoolRequest, error) {

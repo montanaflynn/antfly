@@ -286,6 +286,8 @@ func mapJSONTypeToFieldType(jsonType string, antflyTypes []string) string {
 				return "geopoint"
 			case "geoshape":
 				return "geoshape"
+			case "ip":
+				return "ip"
 			case "embedding":
 				return "embedding"
 			case "search_as_you_type":

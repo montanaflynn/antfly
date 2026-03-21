@@ -3750,6 +3750,14 @@ func (s *DBImpl) searchWireFastPath(ctx context.Context, encodedRequest []byte, 
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	case searchWireOpTextGeoPolygon:
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextTermRange:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextDocID:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextBoolField:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextIPRange:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	default:
 		return nil, fmt.Errorf("unsupported search wire op: %d", op)
 	}
@@ -3905,6 +3913,41 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		q.SetField(polyReq.Field)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(polyReq.Limit), int(polyReq.Offset), false)
 		indexName = polyReq.IndexName
+	case searchWireOpTextTermRange:
+		rangeReq, decodeErr := decodeSearchWireTextTermRangeRequest(encodedRequest)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		q := query.NewTermRangeInclusiveQuery(rangeReq.Min, rangeReq.Max, rangeReq.InclusiveMin, rangeReq.InclusiveMax)
+		q.SetField(rangeReq.Field)
+		bleveReq = bleve.NewSearchRequestOptions(q, int(rangeReq.Limit), int(rangeReq.Offset), false)
+		indexName = rangeReq.IndexName
+	case searchWireOpTextDocID:
+		docReq, decodeErr := decodeSearchWireTextDocIDRequest(encodedRequest)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		q := query.NewDocIDQuery(docReq.IDs)
+		bleveReq = bleve.NewSearchRequestOptions(q, int(docReq.Limit), int(docReq.Offset), false)
+		indexName = s.resolveWireSearchIndexName("full_text_index")
+	case searchWireOpTextBoolField:
+		boolReq, decodeErr := decodeSearchWireTextBoolFieldRequest(encodedRequest)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		q := query.NewBoolFieldQuery(boolReq.Value)
+		q.SetField(boolReq.Field)
+		bleveReq = bleve.NewSearchRequestOptions(q, int(boolReq.Limit), int(boolReq.Offset), false)
+		indexName = boolReq.IndexName
+	case searchWireOpTextIPRange:
+		ipReq, decodeErr := decodeSearchWireTextIPRangeRequest(encodedRequest)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		q := query.NewIPRangeQuery(ipReq.CIDR)
+		q.SetField(ipReq.Field)
+		bleveReq = bleve.NewSearchRequestOptions(q, int(ipReq.Limit), int(ipReq.Offset), false)
+		indexName = ipReq.IndexName
 	default:
 		return nil, fmt.Errorf("unsupported text wire op: %d", op)
 	}

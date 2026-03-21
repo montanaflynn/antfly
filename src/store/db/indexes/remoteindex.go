@@ -65,6 +65,10 @@ const (
 	searchWireOpTextGeoDistance  uint16 = searchwire.OpTextGeoDistance
 	searchWireOpTextGeoBBox      uint16 = searchwire.OpTextGeoBBox
 	searchWireOpTextGeoPolygon   uint16 = searchwire.OpTextGeoPolygon
+	searchWireOpTextTermRange    uint16 = searchwire.OpTextTermRange
+	searchWireOpTextDocID        uint16 = searchwire.OpTextDocID
+	searchWireOpTextBoolField    uint16 = searchwire.OpTextBoolField
+	searchWireOpTextIPRange      uint16 = searchwire.OpTextIPRange
 )
 
 type FieldFilter struct {
@@ -1047,6 +1051,26 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 			return nil, 0, false
 		}
 		return searchwire.EncodeTextGeoBoundingPolygonRequest("full_text_index", typed.Field(), typed.Points, uint32(req.Size), uint32(req.From)), searchWireOpTextGeoPolygon, true
+	case *query.TermRangeQuery:
+		if typed.Field() == "" {
+			return nil, 0, false
+		}
+		return searchwire.EncodeTextTermRangeRequest("full_text_index", typed.Field(), typed.Min, typed.Max, typed.InclusiveMin, typed.InclusiveMax, uint32(req.Size), uint32(req.From)), searchWireOpTextTermRange, true
+	case *query.DocIDQuery:
+		if len(typed.IDs) == 0 {
+			return nil, 0, false
+		}
+		return searchwire.EncodeTextDocIDRequest(typed.IDs, uint32(req.Size), uint32(req.From)), searchWireOpTextDocID, true
+	case *query.BoolFieldQuery:
+		if typed.Field() == "" {
+			return nil, 0, false
+		}
+		return searchwire.EncodeTextBoolFieldRequest("full_text_index", typed.Field(), typed.Bool, uint32(req.Size), uint32(req.From)), searchWireOpTextBoolField, true
+	case *query.IPRangeQuery:
+		if typed.Field() == "" || typed.CIDR == "" {
+			return nil, 0, false
+		}
+		return searchwire.EncodeTextIPRangeRequest("full_text_index", typed.Field(), typed.CIDR, uint32(req.Size), uint32(req.From)), searchWireOpTextIPRange, true
 	case *query.BooleanQuery:
 		if body, ok := encodeBoolTextSearchWire("full_text_index", typed, uint32(req.Size), uint32(req.From)); ok {
 			return body, searchWireOpTextBool, true

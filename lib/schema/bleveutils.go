@@ -85,6 +85,8 @@ func translateTemplateFieldMapping(m TemplateFieldMapping) *mapping.FieldMapping
 		fieldMapping.Type = "geopoint"
 	case AntflyTypeGeoshape:
 		fieldMapping.Type = "geoshape"
+	case AntflyTypeIP:
+		fieldMapping.Type = "IP"
 	case AntflyTypeSearchAsYouType:
 		fieldMapping.Type = "text"
 		fieldMapping.Analyzer = SearchAsYouTypeAnalyzer
@@ -370,6 +372,8 @@ func buildMappingFromJSONSchema(
 				fieldMapping.DocValues = true // Enable for geo aggregations (geohash_grid, geo_distance)
 			case AntflyTypeGeoshape:
 				fieldMapping.Type = "geoshape"
+			case AntflyTypeIP:
+				fieldMapping.Type = "IP"
 			case AntflyTypeEmbedding, AntflyTypeBlob:
 				fieldMapping.Index = false
 			default:
