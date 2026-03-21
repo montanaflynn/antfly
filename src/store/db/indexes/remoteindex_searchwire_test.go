@@ -347,6 +347,26 @@ func TestRemoteIndexSearchInContext_UsesWireForDisjunctionMinShould(t *testing.T
 	require.Equal(t, searchWireOpTextMatch, boolReq.Should[1].Op)
 }
 
+func TestRemoteIndexSearchInContext_UsesWireForBoolFilter(t *testing.T) {
+	must := query.NewMatchQuery("hello")
+	must.SetField("body")
+	filter := query.NewTermQuery("keep")
+	filter.SetField("title")
+	boolQ := query.NewBooleanQuery([]query.Query{must}, nil, nil)
+	boolQ.AddFilter(filter)
+
+	body, op, ok := encodeSimpleTextSearchWire(bleve.NewSearchRequestOptions(boolQ, 10, 0, false))
+	require.True(t, ok)
+	require.Equal(t, searchWireOpTextBool, op)
+
+	boolReq, err := searchwire.DecodeTextBoolRequest(body)
+	require.NoError(t, err)
+	require.Len(t, boolReq.Must, 1)
+	require.Len(t, boolReq.Filter, 1)
+	require.Equal(t, searchWireOpTextMatch, boolReq.Must[0].Op)
+	require.Equal(t, searchWireOpTextTerm, boolReq.Filter[0].Op)
+}
+
 func TestRemoteIndexSearchInContext_UsesWireForMatchAll(t *testing.T) {
 	req := bleve.NewSearchRequestOptions(query.NewMatchAllQuery(), 10, 0, false)
 

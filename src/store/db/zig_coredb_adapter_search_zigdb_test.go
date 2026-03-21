@@ -1530,6 +1530,48 @@ func TestZigCoreDB_FullTextBooleanQueryNestedBool(t *testing.T) {
 	})
 }
 
+func TestZigCoreDB_FullTextBooleanQueryWithFilter(t *testing.T) {
+	db := openZigSearchTestDB(t)
+	ctx := context.Background()
+
+	fullTextConfig := indexes.NewFullTextIndexConfig("full_text_index", false)
+	require.NoError(t, db.AddIndex(*fullTextConfig))
+
+	for key, doc := range map[string]map[string]any{
+		"doc1": {"content": "hello world", "title": "keep"},
+		"doc2": {"content": "hello world", "title": "drop"},
+		"doc3": {"content": "goodbye world", "title": "keep"},
+	} {
+		docJSON, err := json.Marshal(doc)
+		require.NoError(t, err)
+		require.NoError(t, db.Batch(ctx, [][2][]byte{{[]byte(key), docJSON}}, nil, Op_SyncLevelFullText))
+	}
+
+	must := query.NewMatchQuery("hello")
+	must.SetField("content")
+	filter := query.NewTermQuery("keep")
+	filter.SetField("title")
+	boolQ := query.NewBooleanQuery([]query.Query{must}, nil, nil)
+	boolQ.AddFilter(filter)
+	req := &indexes.RemoteIndexSearchRequest{
+		BleveSearchRequest: bleve.NewSearchRequest(boolQ),
+		Limit:              10,
+	}
+	req.BleveSearchRequest.Size = 10
+
+	reqBytes, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	resBytes, err := db.Search(ctx, reqBytes)
+	require.NoError(t, err)
+
+	var res indexes.RemoteIndexSearchResult
+	require.NoError(t, json.Unmarshal(resBytes, &res))
+	require.NotNil(t, res.BleveSearchResult)
+	require.Len(t, res.BleveSearchResult.Hits, 1)
+	assert.Equal(t, "doc1", res.BleveSearchResult.Hits[0].ID)
+}
+
 func TestZigCoreDB_FullTextQueryStringQuery(t *testing.T) {
 	db := openZigSearchTestDB(t)
 	ctx := context.Background()

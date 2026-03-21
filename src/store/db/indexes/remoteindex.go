@@ -1127,7 +1127,7 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 		return nil, 0, false
 	case *query.ConjunctionQuery:
 		if clauses, ok := encodeSimpleTextClauses(typed.Conjuncts); ok {
-			return encodeSearchWireTextBool("full_text_index", clauses, nil, nil, 0, uint32(req.Size), uint32(req.From)), searchWireOpTextBool, true
+			return encodeSearchWireTextBool("full_text_index", clauses, nil, nil, nil, 0, uint32(req.Size), uint32(req.From)), searchWireOpTextBool, true
 		}
 		return nil, 0, false
 	case *query.DisjunctionQuery:
@@ -1135,7 +1135,7 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 			return nil, 0, false
 		}
 		if clauses, ok := encodeSimpleTextClauses(typed.Disjuncts); ok {
-			return encodeSearchWireTextBool("full_text_index", nil, clauses, nil, uint16(typed.Min), uint32(req.Size), uint32(req.From)), searchWireOpTextBool, true
+			return encodeSearchWireTextBool("full_text_index", nil, clauses, nil, nil, uint16(typed.Min), uint32(req.Size), uint32(req.From)), searchWireOpTextBool, true
 		}
 		return nil, 0, false
 	default:
@@ -1320,12 +1320,12 @@ func normalizeSearchWireGeoShapePolygon(coords [][]float64) ([]blevegeo.Point, b
 	return points, true
 }
 
-func encodeSearchWireTextBool(indexName string, must, should, mustNot []searchwire.TextClause, minShould uint16, limit, offset uint32) []byte {
-	return searchwire.EncodeTextBoolRequest(indexName, must, should, mustNot, minShould, limit, offset)
+func encodeSearchWireTextBool(indexName string, must, should, mustNot, filter []searchwire.TextClause, minShould uint16, limit, offset uint32) []byte {
+	return searchwire.EncodeTextBoolRequest(indexName, must, should, mustNot, filter, minShould, limit, offset)
 }
 
 func encodeBoolTextSearchWire(indexName string, q *query.BooleanQuery, limit, offset uint32) ([]byte, bool) {
-	if q == nil || q.Filter != nil {
+	if q == nil {
 		return nil, false
 	}
 	must, ok := encodeBooleanMustClauses(q.Must)
@@ -1340,10 +1340,14 @@ func encodeBoolTextSearchWire(indexName string, q *query.BooleanQuery, limit, of
 	if !ok {
 		return nil, false
 	}
-	if len(must) == 0 && len(should) == 0 && len(mustNot) == 0 {
+	filter, ok := encodeBooleanMustClauses(q.Filter)
+	if !ok {
 		return nil, false
 	}
-	return encodeSearchWireTextBool(indexName, must, should, mustNot, minShould, limit, offset), true
+	if len(must) == 0 && len(should) == 0 && len(mustNot) == 0 && len(filter) == 0 {
+		return nil, false
+	}
+	return encodeSearchWireTextBool(indexName, must, should, mustNot, filter, minShould, limit, offset), true
 }
 
 func encodeBooleanMustClauses(q query.Query) ([]searchwire.TextClause, bool) {
@@ -1393,9 +1397,6 @@ func encodeSimpleTextClauses(queries []query.Query) ([]searchwire.TextClause, bo
 func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 	switch typed := q.(type) {
 	case *query.BooleanQuery:
-		if typed.Filter != nil {
-			return searchwire.TextClause{}, false
-		}
 		must, ok := encodeBooleanMustClauses(typed.Must)
 		if !ok {
 			return searchwire.TextClause{}, false
@@ -1408,7 +1409,11 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 		if !ok {
 			return searchwire.TextClause{}, false
 		}
-		if len(must) == 0 && len(should) == 0 && len(mustNot) == 0 {
+		filter, ok := encodeBooleanMustClauses(typed.Filter)
+		if !ok {
+			return searchwire.TextClause{}, false
+		}
+		if len(must) == 0 && len(should) == 0 && len(mustNot) == 0 && len(filter) == 0 {
 			return searchwire.TextClause{}, false
 		}
 		return searchwire.TextClause{
@@ -1416,6 +1421,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Must:      must,
 			Should:    should,
 			MustNot:   mustNot,
+			Filter:    filter,
 			MinShould: minShould,
 		}, true
 	case *query.ConjunctionQuery:

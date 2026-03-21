@@ -4065,10 +4065,19 @@ func buildSearchWireBoolQuery(req searchWireTextBoolRequest) (query.Query, error
 	if err != nil {
 		return nil, err
 	}
-	if len(must) == 0 && len(should) == 0 && len(mustNot) == 0 {
+	filter, err := buildSearchWireClauseQueries(req.Filter)
+	if err != nil {
+		return nil, err
+	}
+	if len(must) == 0 && len(should) == 0 && len(mustNot) == 0 && len(filter) == 0 {
 		return nil, errSearchWireInvalid
 	}
 	q := query.NewBooleanQuery(must, should, mustNot)
+	if len(filter) == 1 {
+		q.AddFilter(filter[0])
+	} else if len(filter) > 1 {
+		q.AddFilter(query.NewConjunctionQuery(filter))
+	}
 	if req.MinShould != 0 {
 		q.SetMinShould(float64(req.MinShould))
 	}
@@ -4141,9 +4150,11 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 		return q, nil
 	case searchWireOpTextBool:
 		boolReq := searchWireTextBoolRequest{
-			Must:    clause.Must,
-			Should:  clause.Should,
-			MustNot: clause.MustNot,
+			Must:      clause.Must,
+			Should:    clause.Should,
+			MustNot:   clause.MustNot,
+			Filter:    clause.Filter,
+			MinShould: clause.MinShould,
 		}
 		return buildSearchWireBoolQuery(boolReq)
 	case searchWireOpTextQueryString:
