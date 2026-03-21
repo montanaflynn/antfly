@@ -4123,6 +4123,25 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 		return q, nil
 	case searchWireOpTextQueryString:
 		return query.NewQueryStringQuery(clause.Text), nil
+	case searchWireOpTextNumericRange:
+		var min *float64
+		var max *float64
+		if clause.HasNumMin {
+			min = &clause.NumMin
+		}
+		if clause.HasNumMax {
+			max = &clause.NumMax
+		}
+		q := query.NewNumericRangeInclusiveQuery(min, max, boolPtr(clause.InclMin), boolPtr(clause.InclMax))
+		q.SetField(clause.Field)
+		return q, nil
+	case searchWireOpTextDateRange:
+		q := query.NewDateRangeStringInclusiveQuery(clause.Text, clause.AltText, boolPtr(clause.InclMin), boolPtr(clause.InclMax))
+		q.SetField(clause.Field)
+		if clause.Parser != "" {
+			q.SetDateTimeParser(clause.Parser)
+		}
+		return q, nil
 	case searchWireOpTextTermRange:
 		q := query.NewTermRangeInclusiveQuery(clause.Text, clause.AltText, boolPtr(clause.InclMin), boolPtr(clause.InclMax))
 		q.SetField(clause.Field)

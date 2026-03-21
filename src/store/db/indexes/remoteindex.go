@@ -1506,6 +1506,55 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			InclMin: typed.InclusiveMin != nil && *typed.InclusiveMin,
 			InclMax: typed.InclusiveMax != nil && *typed.InclusiveMax,
 		}, true
+	case *query.NumericRangeQuery:
+		if typed.Field() == "" {
+			return searchwire.TextClause{}, false
+		}
+		clause := searchwire.TextClause{
+			Op:      searchWireOpTextNumericRange,
+			Field:   typed.Field(),
+			InclMin: typed.InclusiveMin != nil && *typed.InclusiveMin,
+			InclMax: typed.InclusiveMax != nil && *typed.InclusiveMax,
+		}
+		if typed.Min != nil {
+			clause.NumMin = *typed.Min
+			clause.HasNumMin = true
+		}
+		if typed.Max != nil {
+			clause.NumMax = *typed.Max
+			clause.HasNumMax = true
+		}
+		return clause, true
+	case *query.DateRangeQuery:
+		if typed.Field() == "" || (typed.Start.IsZero() && typed.End.IsZero()) {
+			return searchwire.TextClause{}, false
+		}
+		clause := searchwire.TextClause{
+			Op:      searchWireOpTextDateRange,
+			Field:   typed.Field(),
+			InclMin: typed.InclusiveStart != nil && *typed.InclusiveStart,
+			InclMax: typed.InclusiveEnd != nil && *typed.InclusiveEnd,
+		}
+		if !typed.Start.IsZero() {
+			clause.Text = typed.Start.Time.Format(time.RFC3339Nano)
+		}
+		if !typed.End.IsZero() {
+			clause.AltText = typed.End.Time.Format(time.RFC3339Nano)
+		}
+		return clause, true
+	case *query.DateRangeStringQuery:
+		if typed.Field() == "" {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{
+			Op:      searchWireOpTextDateRange,
+			Field:   typed.Field(),
+			Text:    typed.Start,
+			AltText: typed.End,
+			Parser:  typed.DateTimeParserName(),
+			InclMin: typed.InclusiveStart != nil && *typed.InclusiveStart,
+			InclMax: typed.InclusiveEnd != nil && *typed.InclusiveEnd,
+		}, true
 	case *query.DocIDQuery:
 		if len(typed.IDs) == 0 {
 			return searchwire.TextClause{}, false
