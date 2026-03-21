@@ -386,3 +386,57 @@ func TestSearchWireDocIDBoolFieldAndIPRangeFastPaths(t *testing.T) {
 	require.Equal(t, uint64(2), ipTotal)
 	require.Len(t, ipHits, 2)
 }
+
+func TestSearchWirePhraseAndMultiPhraseFastPaths(t *testing.T) {
+	dir := t.TempDir()
+	db := &DBImpl{logger: zaptest.NewLogger(t)}
+	require.NoError(t, db.Open(dir, false, nil, types.Range{nil, []byte{0xFF}}))
+	defer db.Close()
+
+	tableSchema := &schema.TableSchema{
+		DefaultType: "default",
+		DocumentSchemas: map[string]schema.DocumentSchema{
+			"default": {
+				Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"content": map[string]any{"type": "string"},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, db.UpdateSchema(tableSchema))
+	require.NoError(t, db.AddIndex(*indexes.NewFullTextIndexConfig("full_text_index_v0", false)))
+
+	ctx := context.Background()
+	for key, doc := range map[string]map[string]any{
+		"doc-1": {"content": "alpha beta gamma"},
+		"doc-2": {"content": "alpha delta gamma"},
+		"doc-3": {"content": "beta gamma delta"},
+	} {
+		payload, err := json.Marshal(doc)
+		require.NoError(t, err)
+		err = db.Batch(ctx, [][2][]byte{{[]byte(key), payload}}, nil, Op_SyncLevelFullText)
+		if err != nil && !errors.Is(err, ErrPartialSuccess) {
+			require.NoError(t, err)
+		}
+	}
+
+	phraseBytes := encodeSearchWireTextPhraseRequest("full_text_index", "content", []string{"alpha", "beta"}, 0, false, 10, 0)
+	phraseRes, err := db.Search(ctx, phraseBytes)
+	require.NoError(t, err)
+	phraseTotal, phraseHits, err := searchwire.DecodeHits(phraseRes, searchWireOpTextPhrase)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), phraseTotal)
+	require.Len(t, phraseHits, 1)
+	require.Equal(t, "doc-1", phraseHits[0].ID)
+
+	multiPhraseBytes := encodeSearchWireTextMultiPhraseRequest("full_text_index", "content", [][]string{{"alpha", "beta"}, {"gamma"}}, 0, false, 10, 0)
+	multiPhraseRes, err := db.Search(ctx, multiPhraseBytes)
+	require.NoError(t, err)
+	multiPhraseTotal, multiPhraseHits, err := searchwire.DecodeHits(multiPhraseRes, searchWireOpTextMultiPhrase)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), multiPhraseTotal)
+	require.Len(t, multiPhraseHits, 2)
+}

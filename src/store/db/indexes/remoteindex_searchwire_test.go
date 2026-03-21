@@ -12,6 +12,7 @@ import (
 
 	"github.com/antflydb/antfly/lib/types"
 	"github.com/antflydb/antfly/lib/vector"
+	"github.com/antflydb/antfly/src/store/searchwire"
 	"github.com/blevesearch/bleve/v2"
 	blevegeo "github.com/blevesearch/bleve/v2/geo"
 	"github.com/blevesearch/bleve/v2/search"
@@ -551,6 +552,105 @@ func TestRemoteIndexSearchInContext_UsesWireForBoolField(t *testing.T) {
 			StatusCode: http.StatusOK,
 			Header:     header,
 			Body:       io.NopCloser(bytes.NewReader(makeRemoteIndexWireResponse(searchWireOpTextBoolField, 1, []remoteIndexWireHit{{id: "doc-1", score: 1.0}}))),
+		}, nil
+	})}
+
+	idx, err := NewRemoteIndex(client, []string{"http://wire-search"}, types.ID(1))
+	require.NoError(t, err)
+
+	res, err := idx.SearchInContext(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, uint64(1), res.Total)
+	require.Len(t, res.Hits, 1)
+	require.Equal(t, "doc-1", res.Hits[0].ID)
+}
+
+func TestRemoteIndexSearchInContext_UsesWireForPhrase(t *testing.T) {
+	q := query.NewPhraseQuery([]string{"alpha", "beta"}, "content")
+	req := bleve.NewSearchRequestOptions(q, 10, 0, false)
+
+	client := &http.Client{Transport: remoteIndexRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Helper()
+		require.Equal(t, searchWireContentType, r.Header.Get("Content-Type"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Equal(t, searchWireMagic, binary.LittleEndian.Uint32(body[0:4]))
+		require.Equal(t, searchWireOpTextPhrase, binary.LittleEndian.Uint16(body[6:8]))
+
+		header := make(http.Header)
+		header.Set("Content-Type", searchWireContentType)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(bytes.NewReader(makeRemoteIndexWireResponse(searchWireOpTextPhrase, 1, []remoteIndexWireHit{{id: "doc-1", score: 1.0}}))),
+		}, nil
+	})}
+
+	idx, err := NewRemoteIndex(client, []string{"http://wire-search"}, types.ID(1))
+	require.NoError(t, err)
+
+	res, err := idx.SearchInContext(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, uint64(1), res.Total)
+	require.Len(t, res.Hits, 1)
+	require.Equal(t, "doc-1", res.Hits[0].ID)
+}
+
+func TestRemoteIndexSearchInContext_UsesWireForPhraseWithAutoFuzziness(t *testing.T) {
+	q := query.NewPhraseQuery([]string{"alpha", "beta"}, "content")
+	q.SetAutoFuzziness(true)
+	req := bleve.NewSearchRequestOptions(q, 10, 0, false)
+
+	client := &http.Client{Transport: remoteIndexRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Helper()
+		require.Equal(t, searchWireContentType, r.Header.Get("Content-Type"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Equal(t, searchWireMagic, binary.LittleEndian.Uint32(body[0:4]))
+		require.Equal(t, searchWireOpTextPhrase, binary.LittleEndian.Uint16(body[6:8]))
+		phraseReq, err := searchwire.DecodeTextPhraseRequest(body)
+		require.NoError(t, err)
+		require.True(t, phraseReq.Auto)
+
+		header := make(http.Header)
+		header.Set("Content-Type", searchWireContentType)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(bytes.NewReader(makeRemoteIndexWireResponse(searchWireOpTextPhrase, 1, []remoteIndexWireHit{{id: "doc-1", score: 1.0}}))),
+		}, nil
+	})}
+
+	idx, err := NewRemoteIndex(client, []string{"http://wire-search"}, types.ID(1))
+	require.NoError(t, err)
+
+	res, err := idx.SearchInContext(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, uint64(1), res.Total)
+	require.Len(t, res.Hits, 1)
+}
+
+func TestRemoteIndexSearchInContext_UsesWireForMultiPhrase(t *testing.T) {
+	q := query.NewMultiPhraseQuery([][]string{{"alpha", "beta"}, {"gamma"}}, "content")
+	req := bleve.NewSearchRequestOptions(q, 10, 0, false)
+
+	client := &http.Client{Transport: remoteIndexRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Helper()
+		require.Equal(t, searchWireContentType, r.Header.Get("Content-Type"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Equal(t, searchWireMagic, binary.LittleEndian.Uint32(body[0:4]))
+		require.Equal(t, searchWireOpTextMultiPhrase, binary.LittleEndian.Uint16(body[6:8]))
+
+		header := make(http.Header)
+		header.Set("Content-Type", searchWireContentType)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(bytes.NewReader(makeRemoteIndexWireResponse(searchWireOpTextMultiPhrase, 1, []remoteIndexWireHit{{id: "doc-1", score: 1.0}}))),
 		}, nil
 	})}
 

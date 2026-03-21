@@ -37,6 +37,8 @@ const (
 	OpTextDocID        uint16 = 19
 	OpTextBoolField    uint16 = 20
 	OpTextIPRange      uint16 = 21
+	OpTextPhrase       uint16 = 22
+	OpTextMultiPhrase  uint16 = 23
 )
 
 var ErrInvalid = errors.New("invalid search wire payload")
@@ -167,6 +169,26 @@ type TextIPRangeRequest struct {
 	IndexName string
 	Field     string
 	CIDR      string
+	Limit     uint32
+	Offset    uint32
+}
+
+type TextPhraseRequest struct {
+	IndexName string
+	Field     string
+	Terms     []string
+	Fuzziness uint16
+	Auto      bool
+	Limit     uint32
+	Offset    uint32
+}
+
+type TextMultiPhraseRequest struct {
+	IndexName string
+	Field     string
+	Terms     [][]string
+	Fuzziness uint16
+	Auto      bool
 	Limit     uint32
 	Offset    uint32
 }
@@ -667,6 +689,103 @@ func EncodeTextIPRangeRequest(indexName, field, cidr string, limit, offset uint3
 	copy(out[cursor:], field)
 	cursor += len(field)
 	copy(out[cursor:], cidr)
+	return out
+}
+
+func EncodeTextPhraseRequest(indexName, field string, terms []string, fuzziness uint16, auto bool, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2
+	totalTermsLen := 0
+	for _, term := range terms {
+		totalTermsLen += 2 + len(term)
+	}
+	out := make([]byte, headerLen+len(indexName)+len(field)+totalTermsLen)
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], Magic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], Version)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], OpTextPhrase)
+	cursor += 2
+	var flags uint32
+	if auto {
+		flags |= 1
+	}
+	binary.LittleEndian.PutUint32(out[cursor:], flags)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], fuzziness)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(terms)))
+	cursor += 2
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	copy(out[cursor:], field)
+	cursor += len(field)
+	for _, term := range terms {
+		binary.LittleEndian.PutUint16(out[cursor:], uint16(len(term)))
+		cursor += 2
+		copy(out[cursor:], term)
+		cursor += len(term)
+	}
+	return out
+}
+
+func EncodeTextMultiPhraseRequest(indexName, field string, terms [][]string, fuzziness uint16, auto bool, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2
+	totalTermsLen := 0
+	for _, group := range terms {
+		totalTermsLen += 2
+		for _, term := range group {
+			totalTermsLen += 2 + len(term)
+		}
+	}
+	out := make([]byte, headerLen+len(indexName)+len(field)+totalTermsLen)
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], Magic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], Version)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], OpTextMultiPhrase)
+	cursor += 2
+	var flags uint32
+	if auto {
+		flags |= 1
+	}
+	binary.LittleEndian.PutUint32(out[cursor:], flags)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], fuzziness)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(terms)))
+	cursor += 2
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	copy(out[cursor:], field)
+	cursor += len(field)
+	for _, group := range terms {
+		binary.LittleEndian.PutUint16(out[cursor:], uint16(len(group)))
+		cursor += 2
+		for _, term := range group {
+			binary.LittleEndian.PutUint16(out[cursor:], uint16(len(term)))
+			cursor += 2
+			copy(out[cursor:], term)
+			cursor += len(term)
+		}
+	}
 	return out
 }
 
@@ -1191,6 +1310,109 @@ func DecodeTextIPRangeRequest(raw []byte) (TextIPRangeRequest, error) {
 		IndexName: indexName,
 		Field:     field,
 		CIDR:      cidr,
+		Limit:     limit,
+		Offset:    offset,
+	}, nil
+}
+
+func DecodeTextPhraseRequest(raw []byte) (TextPhraseRequest, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2
+	if len(raw) < headerLen {
+		return TextPhraseRequest{}, ErrInvalid
+	}
+	if op, ok := Op(raw); !ok || op != OpTextPhrase {
+		return TextPhraseRequest{}, ErrInvalid
+	}
+	flags := binary.LittleEndian.Uint32(raw[8:12])
+	limit := binary.LittleEndian.Uint32(raw[12:16])
+	offset := binary.LittleEndian.Uint32(raw[16:20])
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
+	fuzziness := binary.LittleEndian.Uint16(raw[24:26])
+	termCount := int(binary.LittleEndian.Uint16(raw[26:28]))
+	if len(raw) < headerLen+indexNameLen+fieldLen {
+		return TextPhraseRequest{}, ErrInvalid
+	}
+	cursor := headerLen
+	indexName := string(raw[cursor : cursor+indexNameLen])
+	cursor += indexNameLen
+	field := string(raw[cursor : cursor+fieldLen])
+	cursor += fieldLen
+	terms := make([]string, termCount)
+	for i := 0; i < termCount; i++ {
+		if len(raw) < cursor+2 {
+			return TextPhraseRequest{}, ErrInvalid
+		}
+		termLen := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
+		cursor += 2
+		if len(raw) < cursor+termLen {
+			return TextPhraseRequest{}, ErrInvalid
+		}
+		terms[i] = string(raw[cursor : cursor+termLen])
+		cursor += termLen
+	}
+	return TextPhraseRequest{
+		IndexName: indexName,
+		Field:     field,
+		Terms:     terms,
+		Fuzziness: fuzziness,
+		Auto:      flags&1 != 0,
+		Limit:     limit,
+		Offset:    offset,
+	}, nil
+}
+
+func DecodeTextMultiPhraseRequest(raw []byte) (TextMultiPhraseRequest, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2
+	if len(raw) < headerLen {
+		return TextMultiPhraseRequest{}, ErrInvalid
+	}
+	if op, ok := Op(raw); !ok || op != OpTextMultiPhrase {
+		return TextMultiPhraseRequest{}, ErrInvalid
+	}
+	flags := binary.LittleEndian.Uint32(raw[8:12])
+	limit := binary.LittleEndian.Uint32(raw[12:16])
+	offset := binary.LittleEndian.Uint32(raw[16:20])
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
+	fuzziness := binary.LittleEndian.Uint16(raw[24:26])
+	groupCount := int(binary.LittleEndian.Uint16(raw[26:28]))
+	if len(raw) < headerLen+indexNameLen+fieldLen {
+		return TextMultiPhraseRequest{}, ErrInvalid
+	}
+	cursor := headerLen
+	indexName := string(raw[cursor : cursor+indexNameLen])
+	cursor += indexNameLen
+	field := string(raw[cursor : cursor+fieldLen])
+	cursor += fieldLen
+	terms := make([][]string, groupCount)
+	for i := 0; i < groupCount; i++ {
+		if len(raw) < cursor+2 {
+			return TextMultiPhraseRequest{}, ErrInvalid
+		}
+		termCount := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
+		cursor += 2
+		group := make([]string, termCount)
+		for j := 0; j < termCount; j++ {
+			if len(raw) < cursor+2 {
+				return TextMultiPhraseRequest{}, ErrInvalid
+			}
+			termLen := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
+			cursor += 2
+			if len(raw) < cursor+termLen {
+				return TextMultiPhraseRequest{}, ErrInvalid
+			}
+			group[j] = string(raw[cursor : cursor+termLen])
+			cursor += termLen
+		}
+		terms[i] = group
+	}
+	return TextMultiPhraseRequest{
+		IndexName: indexName,
+		Field:     field,
+		Terms:     terms,
+		Fuzziness: fuzziness,
+		Auto:      flags&1 != 0,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil

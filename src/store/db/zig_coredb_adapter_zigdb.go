@@ -1126,6 +1126,40 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 			return nil, err
 		}
 		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextPhrase:
+		req, err := decodeSearchWireTextPhraseRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		q := blevequery.NewPhraseQuery(req.Terms, req.Field)
+		if req.Auto {
+			q.SetAutoFuzziness(true)
+		} else if req.Fuzziness != 0 {
+			q.SetFuzziness(int(req.Fuzziness))
+		}
+		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextMultiPhrase:
+		req, err := decodeSearchWireTextMultiPhraseRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		q := blevequery.NewMultiPhraseQuery(req.Terms, req.Field)
+		if req.Auto {
+			q.SetAutoFuzziness(true)
+		} else if req.Fuzziness != 0 {
+			q.SetFuzziness(int(req.Fuzziness))
+		}
+		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
 	default:
 		return nil, zigUnsupported("Search wire op not implemented")
 	}

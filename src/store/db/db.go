@@ -3758,6 +3758,10 @@ func (s *DBImpl) searchWireFastPath(ctx context.Context, encodedRequest []byte, 
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	case searchWireOpTextIPRange:
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextPhrase:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextMultiPhrase:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	default:
 		return nil, fmt.Errorf("unsupported search wire op: %d", op)
 	}
@@ -3948,6 +3952,32 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		q.SetField(ipReq.Field)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(ipReq.Limit), int(ipReq.Offset), false)
 		indexName = ipReq.IndexName
+	case searchWireOpTextPhrase:
+		phraseReq, decodeErr := decodeSearchWireTextPhraseRequest(encodedRequest)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		q := query.NewPhraseQuery(phraseReq.Terms, phraseReq.Field)
+		if phraseReq.Auto {
+			q.SetAutoFuzziness(true)
+		} else if phraseReq.Fuzziness != 0 {
+			q.SetFuzziness(int(phraseReq.Fuzziness))
+		}
+		bleveReq = bleve.NewSearchRequestOptions(q, int(phraseReq.Limit), int(phraseReq.Offset), false)
+		indexName = phraseReq.IndexName
+	case searchWireOpTextMultiPhrase:
+		phraseReq, decodeErr := decodeSearchWireTextMultiPhraseRequest(encodedRequest)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		q := query.NewMultiPhraseQuery(phraseReq.Terms, phraseReq.Field)
+		if phraseReq.Auto {
+			q.SetAutoFuzziness(true)
+		} else if phraseReq.Fuzziness != 0 {
+			q.SetFuzziness(int(phraseReq.Fuzziness))
+		}
+		bleveReq = bleve.NewSearchRequestOptions(q, int(phraseReq.Limit), int(phraseReq.Offset), false)
+		indexName = phraseReq.IndexName
 	default:
 		return nil, fmt.Errorf("unsupported text wire op: %d", op)
 	}

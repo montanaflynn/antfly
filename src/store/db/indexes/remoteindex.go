@@ -69,6 +69,8 @@ const (
 	searchWireOpTextDocID        uint16 = searchwire.OpTextDocID
 	searchWireOpTextBoolField    uint16 = searchwire.OpTextBoolField
 	searchWireOpTextIPRange      uint16 = searchwire.OpTextIPRange
+	searchWireOpTextPhrase       uint16 = searchwire.OpTextPhrase
+	searchWireOpTextMultiPhrase  uint16 = searchwire.OpTextMultiPhrase
 )
 
 type FieldFilter struct {
@@ -997,6 +999,24 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 			return nil, 0, false
 		}
 		return encodeTextSearchWire(searchWireOpTextMatchPhrase, "full_text_index", typed.Field(), typed.MatchPhrase, uint32(req.Size), uint32(req.From)), searchWireOpTextMatchPhrase, true
+	case *query.PhraseQuery:
+		if typed.Field() == "" || len(typed.Terms) == 0 {
+			return nil, 0, false
+		}
+		fuzziness, auto, ok := searchWirePhraseFuzziness(typed)
+		if !ok {
+			return nil, 0, false
+		}
+		return searchwire.EncodeTextPhraseRequest("full_text_index", typed.Field(), typed.Terms, fuzziness, auto, uint32(req.Size), uint32(req.From)), searchWireOpTextPhrase, true
+	case *query.MultiPhraseQuery:
+		if typed.Field() == "" || len(typed.Terms) == 0 {
+			return nil, 0, false
+		}
+		fuzziness, auto, ok := searchWirePhraseFuzziness(typed)
+		if !ok {
+			return nil, 0, false
+		}
+		return searchwire.EncodeTextMultiPhraseRequest("full_text_index", typed.Field(), typed.Terms, fuzziness, auto, uint32(req.Size), uint32(req.From)), searchWireOpTextMultiPhrase, true
 	case *query.QueryStringQuery:
 		if typed.Query == "" {
 			return nil, 0, false
@@ -1096,6 +1116,35 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 
 func encodeDenseSearchWire(indexName string, vector []float32, k, limit, offset uint32) []byte {
 	return searchwire.EncodeDenseRequest(indexName, vector, k, limit, offset)
+}
+
+func searchWirePhraseFuzziness(q any) (uint16, bool, bool) {
+	payload, err := json.Marshal(q)
+	if err != nil {
+		return 0, false, false
+	}
+	var aux struct {
+		Fuzziness any `json:"fuzziness"`
+	}
+	if err := json.Unmarshal(payload, &aux); err != nil {
+		return 0, false, false
+	}
+	switch value := aux.Fuzziness.(type) {
+	case string:
+		if value == "auto" {
+			return 0, true, true
+		}
+		return 0, false, false
+	case float64:
+		if value < 0 || value > math.MaxUint16 {
+			return 0, false, false
+		}
+		return uint16(value), false, true
+	case nil:
+		return 0, false, true
+	default:
+		return 0, false, false
+	}
 }
 
 func encodeTextSearchWire(op uint16, indexName, field, text string, limit, offset uint32) []byte {

@@ -32,6 +32,8 @@ const (
 	searchWireOpTextDocID        uint16 = searchwire.OpTextDocID
 	searchWireOpTextBoolField    uint16 = searchwire.OpTextBoolField
 	searchWireOpTextIPRange      uint16 = searchwire.OpTextIPRange
+	searchWireOpTextPhrase       uint16 = searchwire.OpTextPhrase
+	searchWireOpTextMultiPhrase  uint16 = searchwire.OpTextMultiPhrase
 )
 
 type searchWireDenseRequest = searchwire.DenseRequest
@@ -52,6 +54,8 @@ type searchWireTextTermRangeRequest = searchwire.TextTermRangeRequest
 type searchWireTextDocIDRequest = searchwire.TextDocIDRequest
 type searchWireTextBoolFieldRequest = searchwire.TextBoolFieldRequest
 type searchWireTextIPRangeRequest = searchwire.TextIPRangeRequest
+type searchWireTextPhraseRequest = searchwire.TextPhraseRequest
+type searchWireTextMultiPhraseRequest = searchwire.TextMultiPhraseRequest
 type searchWireTextClause = searchwire.TextClause
 type searchWireTextBoolRequest = searchwire.TextBoolRequest
 type searchWireHit = searchwire.Hit
@@ -146,6 +150,14 @@ func encodeSearchWireTextIPRangeRequest(indexName, field, cidr string, limit, of
 	return searchwire.EncodeTextIPRangeRequest(indexName, field, cidr, limit, offset)
 }
 
+func encodeSearchWireTextPhraseRequest(indexName, field string, terms []string, fuzziness uint16, auto bool, limit, offset uint32) []byte {
+	return searchwire.EncodeTextPhraseRequest(indexName, field, terms, fuzziness, auto, limit, offset)
+}
+
+func encodeSearchWireTextMultiPhraseRequest(indexName, field string, terms [][]string, fuzziness uint16, auto bool, limit, offset uint32) []byte {
+	return searchwire.EncodeTextMultiPhraseRequest(indexName, field, terms, fuzziness, auto, limit, offset)
+}
+
 func encodeSearchWireTextBoolRequest(indexName string, must, should, mustNot []searchWireTextClause, limit, offset uint32) []byte {
 	return searchwire.EncodeTextBoolRequest(indexName, must, should, mustNot, limit, offset)
 }
@@ -224,6 +236,14 @@ func decodeSearchWireTextBoolFieldRequest(raw []byte) (searchWireTextBoolFieldRe
 
 func decodeSearchWireTextIPRangeRequest(raw []byte) (searchWireTextIPRangeRequest, error) {
 	return searchwire.DecodeTextIPRangeRequest(raw)
+}
+
+func decodeSearchWireTextPhraseRequest(raw []byte) (searchWireTextPhraseRequest, error) {
+	return searchwire.DecodeTextPhraseRequest(raw)
+}
+
+func decodeSearchWireTextMultiPhraseRequest(raw []byte) (searchWireTextMultiPhraseRequest, error) {
+	return searchwire.DecodeTextMultiPhraseRequest(raw)
 }
 
 func decodeSearchWireTextBoolRequest(raw []byte) (searchWireTextBoolRequest, error) {
