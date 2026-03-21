@@ -9,6 +9,8 @@ import (
 	"github.com/antflydb/antfly/lib/types"
 	"github.com/antflydb/antfly/src/store/db/indexes"
 	"github.com/antflydb/antfly/src/store/searchwire"
+	"github.com/blevesearch/bleve/v2"
+	blevegeo "github.com/blevesearch/bleve/v2/geo"
 	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/goccy/go-json"
 	"github.com/stretchr/testify/require"
@@ -491,4 +493,175 @@ func TestSearchWireBoolFastPath_SupportsNumericAndDateRangeClauses(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), total)
 	require.Len(t, hits, 2)
+}
+
+func TestSearchWireBoolFastPath_SupportsGeoClauses(t *testing.T) {
+	dir := t.TempDir()
+	db := &DBImpl{logger: zaptest.NewLogger(t)}
+	require.NoError(t, db.Open(dir, false, nil, types.Range{nil, []byte{0xFF}}))
+	defer db.Close()
+
+	tableSchema := &schema.TableSchema{
+		DefaultType: "default",
+		DocumentSchemas: map[string]schema.DocumentSchema{
+			"default": {
+				Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"location": map[string]any{"type": "string", "x-antfly-types": []any{"geopoint"}},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, db.UpdateSchema(tableSchema))
+	require.NoError(t, db.AddIndex(*indexes.NewFullTextIndexConfig("full_text_index_v0", false)))
+
+	ctx := context.Background()
+	for key, doc := range map[string]map[string]any{
+		"doc-1": {"location": map[string]any{"lat": 37.7749, "lon": -122.4194}},
+		"doc-2": {"location": map[string]any{"lat": 37.7750, "lon": -122.4195}},
+		"doc-3": {"location": map[string]any{"lat": 40.7128, "lon": -74.0060}},
+	} {
+		payload, err := json.Marshal(doc)
+		require.NoError(t, err)
+		err = db.Batch(ctx, [][2][]byte{{[]byte(key), payload}}, nil, Op_SyncLevelFullText)
+		if err != nil && !errors.Is(err, ErrPartialSuccess) {
+			require.NoError(t, err)
+		}
+	}
+
+	cases := []struct {
+		name   string
+		clause searchWireTextClause
+	}{
+		{
+			name: "geo_distance",
+			clause: searchWireTextClause{
+				Op:       searchWireOpTextGeoDistance,
+				Field:    "location",
+				Lon:      -122.4194,
+				Lat:      37.7749,
+				Distance: "2km",
+			},
+		},
+		{
+			name: "geo_bbox",
+			clause: searchWireTextClause{
+				Op:             searchWireOpTextGeoBBox,
+				Field:          "location",
+				TopLeftLon:     -122.6,
+				TopLeftLat:     37.9,
+				BottomRightLon: -122.2,
+				BottomRightLat: 37.7,
+			},
+		},
+		{
+			name: "geo_polygon",
+			clause: searchWireTextClause{
+				Op:    searchWireOpTextGeoPolygon,
+				Field: "location",
+				Points: []blevegeo.Point{
+					{Lon: -122.6, Lat: 37.9},
+					{Lon: -122.2, Lat: 37.9},
+					{Lon: -122.2, Lat: 37.7},
+					{Lon: -122.6, Lat: 37.7},
+				},
+			},
+		},
+		{
+			name: "geo_shape",
+			clause: searchWireTextClause{
+				Op:       searchWireOpTextGeoShape,
+				Field:    "location",
+				Relation: "intersects",
+				ShapePolygons: [][]blevegeo.Point{{
+					{Lon: -122.6, Lat: 37.9},
+					{Lon: -122.2, Lat: 37.9},
+					{Lon: -122.2, Lat: 37.7},
+					{Lon: -122.6, Lat: 37.7},
+					{Lon: -122.6, Lat: 37.9},
+				}},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reqBytes := encodeSearchWireTextBoolRequest("full_text_index", []searchWireTextClause{tc.clause}, nil, nil, 10, 0)
+			resBytes, err := db.Search(ctx, reqBytes)
+			require.NoError(t, err)
+			total, hits, err := searchwire.DecodeHits(resBytes, searchWireOpTextBool)
+			require.NoError(t, err)
+			require.Equal(t, uint64(2), total)
+			require.Len(t, hits, 2)
+		})
+	}
+}
+
+func TestDBImpl_FullTextBooleanGeoShapeQuery(t *testing.T) {
+	dir := t.TempDir()
+	db := &DBImpl{logger: zaptest.NewLogger(t)}
+	require.NoError(t, db.Open(dir, false, nil, types.Range{nil, []byte{0xFF}}))
+	defer db.Close()
+
+	tableSchema := &schema.TableSchema{
+		DefaultType: "default",
+		DocumentSchemas: map[string]schema.DocumentSchema{
+			"default": {
+				Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"location": map[string]any{"type": "string", "x-antfly-types": []any{"geopoint"}},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, db.UpdateSchema(tableSchema))
+	require.NoError(t, db.AddIndex(*indexes.NewFullTextIndexConfig("full_text_index_v0", false)))
+
+	ctx := context.Background()
+	for key, doc := range map[string]map[string]any{
+		"doc-1": {"location": map[string]any{"lat": 37.7749, "lon": -122.4194}},
+		"doc-2": {"location": map[string]any{"lat": 37.7750, "lon": -122.4195}},
+		"doc-3": {"location": map[string]any{"lat": 40.7128, "lon": -74.0060}},
+	} {
+		payload, err := json.Marshal(doc)
+		require.NoError(t, err)
+		err = db.Batch(ctx, [][2][]byte{{[]byte(key), payload}}, nil, Op_SyncLevelFullText)
+		if err != nil && !errors.Is(err, ErrPartialSuccess) {
+			require.NoError(t, err)
+		}
+	}
+
+	shapeQ, err := query.NewGeoShapeQuery([][][][]float64{
+		{
+			{
+				{-122.6, 37.9},
+				{-122.2, 37.9},
+				{-122.2, 37.7},
+				{-122.6, 37.7},
+				{-122.6, 37.9},
+			},
+		},
+	}, "polygon", "intersects")
+	require.NoError(t, err)
+	shapeQ.SetField("location")
+
+	req := &indexes.RemoteIndexSearchRequest{
+		BleveSearchRequest: bleve.NewSearchRequest(query.NewBooleanQuery([]query.Query{shapeQ}, nil, nil)),
+		Limit:              10,
+	}
+	req.BleveSearchRequest.Size = 10
+
+	reqBytes, err := json.Marshal(req)
+	require.NoError(t, err)
+	resBytes, err := db.Search(ctx, reqBytes)
+	require.NoError(t, err)
+
+	var res indexes.RemoteIndexSearchResult
+	require.NoError(t, json.Unmarshal(resBytes, &res))
+	require.NotNil(t, res.BleveSearchResult)
+	require.Len(t, res.BleveSearchResult.Hits, 2)
 }

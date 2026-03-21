@@ -3335,6 +3335,10 @@ func (s *DBImpl) Search(ctx context.Context, encodedReqest []byte) (resp []byte,
 		)
 	}
 	if searchRequest.BleveSearchRequest != nil {
+		searchRequest.BleveSearchRequest.Query, err = normalizeGeoShapeQueryForGeoPoint(searchRequest.BleveSearchRequest.Query, s.schema)
+		if err != nil {
+			return nil, fmt.Errorf("normalizing bleve query: %w", err)
+		}
 		resp, err := s.routeSearch(ctx, fullTextIndexName, searchRequest.BleveSearchRequest, searchRequest.FilterPrefix)
 		if err != nil {
 			return nil, fmt.Errorf("searching bleve: %w", err)
@@ -3363,6 +3367,10 @@ func (s *DBImpl) Search(ctx context.Context, encodedReqest []byte) (resp []byte,
 			q, err := query.ParseQuery(searchRequest.FilterQuery)
 			if err != nil {
 				return nil, fmt.Errorf("parsing filter query: %w", err)
+			}
+			q, err = normalizeGeoShapeQueryForGeoPoint(q, s.schema)
+			if err != nil {
+				return nil, fmt.Errorf("normalizing filter query: %w", err)
 			}
 			bleveSearchRequest := bleve.NewSearchRequest(q)
 			bleveSearchRequest.Size = math.MaxInt
@@ -4026,6 +4034,12 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 	if err != nil {
 		return nil, err
 	}
+	if bleveReq != nil {
+		bleveReq.Query, err = normalizeGeoShapeQueryForGeoPoint(bleveReq.Query, s.schema)
+		if err != nil {
+			return nil, fmt.Errorf("normalizing text query: %w", err)
+		}
+	}
 	indexName = s.resolveWireSearchIndexName(indexName)
 	resp, err := s.routeSearch(ctx, indexName, bleveReq, nil)
 	if err != nil {
@@ -4141,6 +4155,49 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 		if clause.Parser != "" {
 			q.SetDateTimeParser(clause.Parser)
 		}
+		return q, nil
+	case searchWireOpTextGeoDistance:
+		q := query.NewGeoDistanceQuery(clause.Lon, clause.Lat, clause.Distance)
+		q.SetField(clause.Field)
+		return q, nil
+	case searchWireOpTextGeoBBox:
+		q := query.NewGeoBoundingBoxQuery(clause.TopLeftLon, clause.TopLeftLat, clause.BottomRightLon, clause.BottomRightLat)
+		q.SetField(clause.Field)
+		return q, nil
+	case searchWireOpTextGeoPolygon:
+		if len(clause.Points) == 0 {
+			return nil, errSearchWireInvalid
+		}
+		points := make([]blevegeo.Point, len(clause.Points))
+		copy(points, clause.Points)
+		q := query.NewGeoBoundingPolygonQuery(points)
+		q.SetField(clause.Field)
+		return q, nil
+	case searchWireOpTextGeoShape:
+		if len(clause.ShapePolygons) == 0 {
+			return nil, errSearchWireInvalid
+		}
+		coordinates := make([][][][]float64, len(clause.ShapePolygons))
+		for i, polygon := range clause.ShapePolygons {
+			ring := make([][]float64, len(polygon))
+			for j, point := range polygon {
+				ring[j] = []float64{point.Lon, point.Lat}
+			}
+			coordinates[i] = [][][]float64{ring}
+		}
+		shapeType := "multipolygon"
+		if len(coordinates) == 1 {
+			shapeType = "polygon"
+		}
+		relation := clause.Relation
+		if relation == "" {
+			relation = "intersects"
+		}
+		q, err := query.NewGeoShapeQuery(coordinates, shapeType, relation)
+		if err != nil {
+			return nil, err
+		}
+		q.SetField(clause.Field)
 		return q, nil
 	case searchWireOpTextTermRange:
 		q := query.NewTermRangeInclusiveQuery(clause.Text, clause.AltText, boolPtr(clause.InclMin), boolPtr(clause.InclMax))

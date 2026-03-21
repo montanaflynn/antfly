@@ -66,25 +66,35 @@ type TextRequest struct {
 }
 
 type TextClause struct {
-	Op        uint16
-	Field     string
-	Text      string
-	AltText   string
-	Analyzer  string
-	Parser    string
-	Prefix    uint16
-	Fuzziness uint16
-	NumMin    float64
-	NumMax    float64
-	Auto      bool
-	Operator  uint8
-	BoolValue bool
-	InclMin   bool
-	InclMax   bool
-	HasNumMin bool
-	HasNumMax bool
-	Terms     []string
-	TermSets  [][]string
+	Op             uint16
+	Field          string
+	Text           string
+	AltText        string
+	Analyzer       string
+	Parser         string
+	Distance       string
+	Relation       string
+	Prefix         uint16
+	Fuzziness      uint16
+	NumMin         float64
+	NumMax         float64
+	Lon            float64
+	Lat            float64
+	TopLeftLon     float64
+	TopLeftLat     float64
+	BottomRightLon float64
+	BottomRightLat float64
+	Auto           bool
+	Operator       uint8
+	BoolValue      bool
+	InclMin        bool
+	InclMax        bool
+	HasNumMin      bool
+	HasNumMax      bool
+	Terms          []string
+	TermSets       [][]string
+	Points         []blevegeo.Point
+	ShapePolygons  [][]blevegeo.Point
 }
 
 type TextBoolRequest struct {
@@ -1711,7 +1721,8 @@ func DecodeHits(raw []byte, expectedOp uint16) (uint64, []Hit, error) {
 func encodedClausesLen(clauses []TextClause) int {
 	total := 0
 	for _, clause := range clauses {
-		total += 2 + 2 + 4 + 4 + 2 + 2 + 2 + 8 + 8 + 1 + 1 + 1 + 2 + 2 + len(clause.Field) + len(clause.Text) + len(clause.AltText) + len(clause.Analyzer) + len(clause.Parser)
+		total += 2 + 2 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 2 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1 + 1 + 2 + 2 + 2 + 2 +
+			len(clause.Field) + len(clause.Text) + len(clause.AltText) + len(clause.Analyzer) + len(clause.Parser) + len(clause.Distance) + len(clause.Relation)
 		for _, term := range clause.Terms {
 			total += 2 + len(term)
 		}
@@ -1720,6 +1731,10 @@ func encodedClausesLen(clauses []TextClause) int {
 			for _, term := range set {
 				total += 2 + len(term)
 			}
+		}
+		total += len(clause.Points) * 16
+		for _, polygon := range clause.ShapePolygons {
+			total += 2 + len(polygon)*16
 		}
 	}
 	return total
@@ -1739,6 +1754,10 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 		*cursor += 2
 		binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(clause.Parser)))
 		*cursor += 2
+		binary.LittleEndian.PutUint32(out[*cursor:], uint32(len(clause.Distance)))
+		*cursor += 4
+		binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(clause.Relation)))
+		*cursor += 2
 		binary.LittleEndian.PutUint16(out[*cursor:], clause.Prefix)
 		*cursor += 2
 		binary.LittleEndian.PutUint16(out[*cursor:], clause.Fuzziness)
@@ -1746,6 +1765,18 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 		binary.LittleEndian.PutUint64(out[*cursor:], math.Float64bits(clause.NumMin))
 		*cursor += 8
 		binary.LittleEndian.PutUint64(out[*cursor:], math.Float64bits(clause.NumMax))
+		*cursor += 8
+		binary.LittleEndian.PutUint64(out[*cursor:], math.Float64bits(clause.Lon))
+		*cursor += 8
+		binary.LittleEndian.PutUint64(out[*cursor:], math.Float64bits(clause.Lat))
+		*cursor += 8
+		binary.LittleEndian.PutUint64(out[*cursor:], math.Float64bits(clause.TopLeftLon))
+		*cursor += 8
+		binary.LittleEndian.PutUint64(out[*cursor:], math.Float64bits(clause.TopLeftLat))
+		*cursor += 8
+		binary.LittleEndian.PutUint64(out[*cursor:], math.Float64bits(clause.BottomRightLon))
+		*cursor += 8
+		binary.LittleEndian.PutUint64(out[*cursor:], math.Float64bits(clause.BottomRightLat))
 		*cursor += 8
 		if clause.Auto {
 			out[*cursor] = 1
@@ -1775,6 +1806,10 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 		*cursor += 2
 		binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(clause.TermSets)))
 		*cursor += 2
+		binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(clause.Points)))
+		*cursor += 2
+		binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(clause.ShapePolygons)))
+		*cursor += 2
 		copy(out[*cursor:], clause.Field)
 		*cursor += len(clause.Field)
 		copy(out[*cursor:], clause.Text)
@@ -1785,6 +1820,10 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 		*cursor += len(clause.Analyzer)
 		copy(out[*cursor:], clause.Parser)
 		*cursor += len(clause.Parser)
+		copy(out[*cursor:], clause.Distance)
+		*cursor += len(clause.Distance)
+		copy(out[*cursor:], clause.Relation)
+		*cursor += len(clause.Relation)
 		for _, term := range clause.Terms {
 			binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(term)))
 			*cursor += 2
@@ -1801,13 +1840,29 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 				*cursor += len(term)
 			}
 		}
+		for _, point := range clause.Points {
+			binary.LittleEndian.PutUint64(out[*cursor:], math.Float64bits(point.Lon))
+			*cursor += 8
+			binary.LittleEndian.PutUint64(out[*cursor:], math.Float64bits(point.Lat))
+			*cursor += 8
+		}
+		for _, polygon := range clause.ShapePolygons {
+			binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(polygon)))
+			*cursor += 2
+			for _, point := range polygon {
+				binary.LittleEndian.PutUint64(out[*cursor:], math.Float64bits(point.Lon))
+				*cursor += 8
+				binary.LittleEndian.PutUint64(out[*cursor:], math.Float64bits(point.Lat))
+				*cursor += 8
+			}
+		}
 	}
 }
 
 func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error) {
 	clauses := make([]TextClause, count)
 	for i := 0; i < count; i++ {
-		if len(raw) < cursor+43 {
+		if len(raw) < cursor+101 {
 			return nil, 0, ErrInvalid
 		}
 		op := binary.LittleEndian.Uint16(raw[cursor : cursor+2])
@@ -1825,6 +1880,10 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 		cursor += 2
 		parserLen := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
 		cursor += 2
+		distanceLen := int(binary.LittleEndian.Uint32(raw[cursor : cursor+4]))
+		cursor += 4
+		relationLen := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
+		cursor += 2
 		prefix := binary.LittleEndian.Uint16(raw[cursor : cursor+2])
 		cursor += 2
 		fuzziness := binary.LittleEndian.Uint16(raw[cursor : cursor+2])
@@ -1832,6 +1891,18 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 		numMin := math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor : cursor+8]))
 		cursor += 8
 		numMax := math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor : cursor+8]))
+		cursor += 8
+		lon := math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor : cursor+8]))
+		cursor += 8
+		lat := math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor : cursor+8]))
+		cursor += 8
+		topLeftLon := math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor : cursor+8]))
+		cursor += 8
+		topLeftLat := math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor : cursor+8]))
+		cursor += 8
+		bottomRightLon := math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor : cursor+8]))
+		cursor += 8
+		bottomRightLat := math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor : cursor+8]))
 		cursor += 8
 		auto := raw[cursor] != 0
 		cursor += 1
@@ -1843,7 +1914,11 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 		cursor += 2
 		termSetCount := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
 		cursor += 2
-		if len(raw) < cursor+fieldLen+textLen+altTextLen+analyzerLen+parserLen {
+		pointCount := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
+		cursor += 2
+		shapePolygonCount := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
+		cursor += 2
+		if len(raw) < cursor+fieldLen+textLen+altTextLen+analyzerLen+parserLen+distanceLen+relationLen {
 			return nil, 0, ErrInvalid
 		}
 		field := string(raw[cursor : cursor+fieldLen])
@@ -1856,6 +1931,10 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 		cursor += analyzerLen
 		parser := string(raw[cursor : cursor+parserLen])
 		cursor += parserLen
+		distance := string(raw[cursor : cursor+distanceLen])
+		cursor += distanceLen
+		relation := string(raw[cursor : cursor+relationLen])
+		cursor += relationLen
 		terms := make([]string, termCount)
 		for j := 0; j < termCount; j++ {
 			if len(raw) < cursor+2 {
@@ -1891,26 +1970,67 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 			}
 			termSets[j] = group
 		}
+		points := make([]blevegeo.Point, pointCount)
+		for j := 0; j < pointCount; j++ {
+			if len(raw) < cursor+16 {
+				return nil, 0, ErrInvalid
+			}
+			points[j] = blevegeo.Point{
+				Lon: math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor : cursor+8])),
+				Lat: math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor+8 : cursor+16])),
+			}
+			cursor += 16
+		}
+		shapePolygons := make([][]blevegeo.Point, shapePolygonCount)
+		for j := 0; j < shapePolygonCount; j++ {
+			if len(raw) < cursor+2 {
+				return nil, 0, ErrInvalid
+			}
+			polygonLen := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
+			cursor += 2
+			polygon := make([]blevegeo.Point, polygonLen)
+			for k := 0; k < polygonLen; k++ {
+				if len(raw) < cursor+16 {
+					return nil, 0, ErrInvalid
+				}
+				polygon[k] = blevegeo.Point{
+					Lon: math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor : cursor+8])),
+					Lat: math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor+8 : cursor+16])),
+				}
+				cursor += 16
+			}
+			shapePolygons[j] = polygon
+		}
 		clauses[i] = TextClause{
-			Op:        op,
-			Field:     field,
-			Text:      text,
-			AltText:   altText,
-			Analyzer:  analyzer,
-			Parser:    parser,
-			Prefix:    prefix,
-			Fuzziness: fuzziness,
-			NumMin:    numMin,
-			NumMax:    numMax,
-			Auto:      auto,
-			Operator:  operator,
-			BoolValue: flags&(1<<0) != 0,
-			InclMin:   flags&(1<<1) != 0,
-			InclMax:   flags&(1<<2) != 0,
-			HasNumMin: flags&(1<<3) != 0,
-			HasNumMax: flags&(1<<4) != 0,
-			Terms:     terms,
-			TermSets:  termSets,
+			Op:             op,
+			Field:          field,
+			Text:           text,
+			AltText:        altText,
+			Analyzer:       analyzer,
+			Parser:         parser,
+			Distance:       distance,
+			Relation:       relation,
+			Prefix:         prefix,
+			Fuzziness:      fuzziness,
+			NumMin:         numMin,
+			NumMax:         numMax,
+			Lon:            lon,
+			Lat:            lat,
+			TopLeftLon:     topLeftLon,
+			TopLeftLat:     topLeftLat,
+			BottomRightLon: bottomRightLon,
+			BottomRightLat: bottomRightLat,
+			Auto:           auto,
+			Operator:       operator,
+			BoolValue:      flags&(1<<0) != 0,
+			InclMin:        flags&(1<<1) != 0,
+			InclMax:        flags&(1<<2) != 0,
+			HasNumMin:      flags&(1<<3) != 0,
+			HasNumMax:      flags&(1<<4) != 0,
+			Terms:          terms,
+			TermSets:       termSets,
+			Points:         points,
+			ShapePolygons:  shapePolygons,
 		}
 	}
 	return clauses, cursor, nil
@@ -1923,6 +2043,8 @@ func validClauseOp(op uint16) bool {
 	case OpTextPrefix, OpTextWildcard, OpTextRegexp:
 		return true
 	case OpTextFuzzy, OpTextTermRange, OpTextDocID, OpTextBoolField, OpTextIPRange, OpTextNumericRange, OpTextDateRange:
+		return true
+	case OpTextGeoDistance, OpTextGeoBBox, OpTextGeoPolygon, OpTextGeoShape:
 		return true
 	default:
 		return false

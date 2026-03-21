@@ -2412,7 +2412,11 @@ func (db *ZigCoreDB) buildTextSearchRequest(req *bleve.SearchRequest) (zbridge.S
 		out.TextQueryType = "match_all"
 		return out, nil
 	}
-	normalized, err := normalizeBackendTextQuery(req.Query, db.textAnalysisConfig(), db.textIndexMapping())
+	normalizedQuery, err := normalizeGeoShapeQueryForGeoPoint(req.Query, db.schema)
+	if err != nil {
+		return zbridge.SearchRequestPayload{}, err
+	}
+	normalized, err := normalizeBackendTextQuery(normalizedQuery, db.textAnalysisConfig(), db.textIndexMapping())
 	if err != nil {
 		return zbridge.SearchRequestPayload{}, err
 	}

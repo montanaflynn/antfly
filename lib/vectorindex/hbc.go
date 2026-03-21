@@ -1064,33 +1064,47 @@ func (idx *HBCIndex) Batch(ctx context.Context, b *Batch) (err error) {
 	meta = &metaCopy
 	idx.metaMu.RUnlock()
 
-	for _, id := range b.Deletes {
-		// Remove from tree structure by findng the leaf containing this vector
-		leafID, err := idx.findLeafForVectorID(batch, idx.writerCache, meta.RootNode, id)
-		if err != nil {
-			if errors.Is(err, ErrNotFound) {
+	if len(b.Deletes) > 0 {
+		pendingDeletes := make(map[uint64]struct{}, len(b.Deletes))
+		for _, id := range b.Deletes {
+			pendingDeletes[id] = struct{}{}
+		}
+		leafByVectorID := make(map[uint64]uint64, len(pendingDeletes))
+		if err := idx.findLeavesForVectorIDs(batch, idx.writerCache, meta.RootNode, pendingDeletes, leafByVectorID); err != nil {
+			return fmt.Errorf("finding leaves for delete batch: %w", err)
+		}
+
+		leafDeleteOrder := make([]uint64, 0, len(leafByVectorID))
+		leafDeletes := make(map[uint64][]uint64, len(leafByVectorID))
+		for _, id := range b.Deletes {
+			leafID, ok := leafByVectorID[id]
+			if !ok {
 				continue
 			}
-			return err
-		}
-
-		if err := idx.removeFromLeaf(batch, idx.writerCache, meta, leafID, id); err != nil {
-			if errors.Is(err, ErrNotFound) {
-				continue
+			if _, seen := leafDeletes[leafID]; !seen {
+				leafDeleteOrder = append(leafDeleteOrder, leafID)
 			}
-			return fmt.Errorf("removing from tree: %w", err)
+			leafDeletes[leafID] = append(leafDeletes[leafID], id)
 		}
 
-		// Note: Vectors are stored in VectorDB and managed externally - we only delete metadata
+		for _, leafID := range leafDeleteOrder {
+			ids := leafDeletes[leafID]
+			if err := idx.removeFromLeaf(batch, idx.writerCache, meta, leafID, ids...); err != nil {
+				if errors.Is(err, ErrNotFound) {
+					continue
+				}
+				return fmt.Errorf("removing from tree: %w", err)
+			}
 
-		// Delete metadata
-		metaKey := makeHBCMetadataKey(idx.prefix, id)
-		if err := batch.Delete(metaKey, nil); err != nil {
-			return fmt.Errorf("failed to delete metadata: %w", err)
-		}
-
-		if meta.ActiveCount > 0 {
-			meta.ActiveCount--
+			for _, id := range ids {
+				metaKey := makeHBCMetadataKey(idx.prefix, id)
+				if err := batch.Delete(metaKey, nil); err != nil {
+					return fmt.Errorf("failed to delete metadata: %w", err)
+				}
+				if meta.ActiveCount > 0 {
+					meta.ActiveCount--
+				}
+			}
 		}
 	}
 
@@ -2187,6 +2201,22 @@ func (idx *HBCIndex) recomputeLeafCentroid(batch pebble.Reader, leaf *HBCNode) e
 	return nil
 }
 
+func (idx *HBCIndex) mergeLeafCentroids(dst *HBCNode, dstMemberCount int, src *HBCNode, srcMemberCount int) {
+	switch {
+	case dstMemberCount == 0:
+		copy(dst.Centroid, src.Centroid)
+	case srcMemberCount == 0:
+		return
+	default:
+		total := float32(dstMemberCount + srcMemberCount)
+		dstWeight := float32(dstMemberCount) / total
+		srcWeight := float32(srcMemberCount) / total
+		for i := range dst.Centroid {
+			dst.Centroid[i] = dst.Centroid[i]*dstWeight + src.Centroid[i]*srcWeight
+		}
+	}
+}
+
 func (idx *HBCIndex) recomputeInternalCentroid(batch pebble.Reader, cacheBatch nodeCache, node *HBCNode) error {
 	if len(node.Children) == 0 {
 		clear(node.Centroid)
@@ -2293,7 +2323,7 @@ func (idx *HBCIndex) removeFromLeaf(
 	cacheBatch nodeCache,
 	meta *hbcIndexMetadata,
 	leafID uint64,
-	vectorID uint64,
+	vectorIDs ...uint64,
 ) error {
 	leafUnsafe, err := idx.loadNode(batch, cacheBatch, leafID)
 	if err != nil {
@@ -2307,42 +2337,37 @@ func (idx *HBCIndex) removeFromLeaf(
 		idx.nodePool.Put(leaf)
 	}()
 
-	// Remove from members
-	i := slices.IndexFunc(leaf.Members, func(id uint64) bool {
-		return id == vectorID
-	})
-	if i < 0 {
-		return fmt.Errorf("vector %d not found in leaf %d", vectorID, leafID)
+	deleteSet := make(map[uint64]struct{}, len(vectorIDs))
+	for _, vectorID := range vectorIDs {
+		deleteSet[vectorID] = struct{}{}
 	}
+	if len(deleteSet) == 0 {
+		return nil
+	}
+
 	if leafUnsafe.QuantizedVectors != nil {
 		leaf.QuantizedVectors = leafUnsafe.QuantizedVectors.Clone()
 	}
 
-	// Load the removed vector for incremental centroid update. If the vector
-	// is already gone from VectorDB (externally deleted), we skip the
-	// incremental update and just clear the centroid — the next split will
-	// recompute it exactly.
-	removedVec := idx.writerAllocator.AllocVector(int(idx.config.Dimension))
-	defer idx.writerAllocator.FreeVector(removedVec)
-	hasRemovedVec := false
-	if _, err := idx.GetVector(batch, vectorID, removedVec); err == nil {
-		idx.TransformVector(removedVec, removedVec)
-		hasRemovedVec = true
-	}
-
-	oldCount := len(leaf.Members)
-	leaf.Members = utils.ReplaceWithLast(leaf.Members, i)
-	if leaf.QuantizedVectors != nil {
-		leaf.QuantizedVectors.ReplaceWithLast(i)
-	}
-
-	if len(leaf.Members) > 0 && hasRemovedVec && len(leaf.Centroid) == len(removedVec) {
-		nfOld := float32(oldCount)
-		nfNew := float32(len(leaf.Members))
-		for i := range leaf.Centroid {
-			leaf.Centroid[i] = (leaf.Centroid[i]*nfOld - removedVec[i]) / nfNew
+	removedCount := 0
+	for i := len(leaf.Members) - 1; i >= 0; i-- {
+		memberID := leaf.Members[i]
+		if _, ok := deleteSet[memberID]; ok {
+			leaf.Members = utils.ReplaceWithLast(leaf.Members, i)
+			if leaf.QuantizedVectors != nil {
+				leaf.QuantizedVectors.ReplaceWithLast(i)
+			}
+			removedCount++
 		}
-	} else if len(leaf.Members) == 0 {
+	}
+	if removedCount == 0 {
+		return ErrNotFound
+	}
+	if len(leaf.Members) > 0 {
+		if err := idx.recomputeLeafCentroid(batch, leaf); err != nil {
+			return err
+		}
+	} else {
 		clear(leaf.Centroid)
 	}
 
@@ -2424,12 +2449,9 @@ func (idx *HBCIndex) removeFromLeaf(
 		return nil
 	}
 
+	bestSiblingMemberCount := len(bestSibling.Members)
 	bestSibling.Members = append(bestSibling.Members, leaf.Members...)
-	if err := idx.recomputeLeafCentroid(batch, bestSibling); err != nil {
-		bestSibling.reset()
-		idx.nodePool.Put(bestSibling)
-		return err
-	}
+	idx.mergeLeafCentroids(bestSibling, bestSiblingMemberCount, leaf, len(leaf.Members))
 	if err := idx.saveNode(batch, cacheBatch, bestSibling); err != nil {
 		bestSibling.reset()
 		idx.nodePool.Put(bestSibling)
@@ -2467,6 +2489,46 @@ func (idx *HBCIndex) removeFromLeaf(
 		return err
 	}
 	return idx.collapseSingleChildParents(batch, cacheBatch, meta, leaf.Parent)
+}
+
+func (idx *HBCIndex) findLeavesForVectorIDs(
+	batch pebble.Reader,
+	cacheBatch nodeCache,
+	nodeID uint64,
+	pending map[uint64]struct{},
+	leafByVectorID map[uint64]uint64,
+) error {
+	if len(pending) == 0 {
+		return nil
+	}
+
+	node, err := idx.loadNode(batch, cacheBatch, nodeID)
+	if err != nil {
+		return fmt.Errorf("loading nodeID for batch search %d: %w", nodeID, err)
+	}
+	if node.IsLeaf {
+		for _, memberID := range node.Members {
+			if _, ok := pending[memberID]; ok {
+				leafByVectorID[memberID] = nodeID
+				delete(pending, memberID)
+				if len(pending) == 0 {
+					return nil
+				}
+			}
+		}
+		return nil
+	}
+
+	for _, childID := range node.Children {
+		if err := idx.findLeavesForVectorIDs(batch, cacheBatch, childID, pending, leafByVectorID); err != nil {
+			return err
+		}
+		if len(pending) == 0 {
+			return nil
+		}
+	}
+
+	return nil
 }
 
 // findLeafForVectorID finds the leaf node containing a vector

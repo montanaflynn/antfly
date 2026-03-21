@@ -1389,6 +1389,60 @@ func TestZigCoreDB_FullTextBooleanQuery(t *testing.T) {
 	})
 }
 
+func TestZigCoreDB_FullTextBooleanQueryGeoShape(t *testing.T) {
+	db := openZigSearchTestDB(t)
+	ctx := context.Background()
+
+	fullTextConfig := indexes.NewFullTextIndexConfig("full_text_index", false)
+	require.NoError(t, db.AddIndex(*fullTextConfig))
+
+	for key, doc := range map[string]map[string]any{
+		"doc1": {"content": "alpha", "location": map[string]any{"lat": 5.0, "lon": 5.0}},
+		"doc2": {"content": "alpha", "location": map[string]any{"lat": 20.0, "lon": 20.0}},
+		"doc3": {"content": "alpha", "location": map[string]any{"lat": 3.0, "lon": 4.0}},
+	} {
+		docJSON, err := json.Marshal(doc)
+		require.NoError(t, err)
+		require.NoError(t, db.Batch(ctx, [][2][]byte{{[]byte(key), docJSON}}, nil, Op_SyncLevelFullText))
+	}
+
+	shapeQ, err := query.NewGeoShapeQuery([][][][]float64{
+		{
+			{
+				{0, 0},
+				{10, 0},
+				{10, 10},
+				{0, 10},
+				{0, 0},
+			},
+		},
+	}, "polygon", "intersects")
+	require.NoError(t, err)
+	shapeQ.SetField("location")
+
+	boolQ := query.NewBooleanQuery([]query.Query{shapeQ}, nil, nil)
+	req := &indexes.RemoteIndexSearchRequest{
+		BleveSearchRequest: bleve.NewSearchRequest(boolQ),
+		Limit:              10,
+	}
+	req.BleveSearchRequest.Size = 10
+
+	reqBytes, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	resBytes, err := db.Search(ctx, reqBytes)
+	require.NoError(t, err)
+
+	var res indexes.RemoteIndexSearchResult
+	require.NoError(t, json.Unmarshal(resBytes, &res))
+	require.NotNil(t, res.BleveSearchResult)
+	require.Len(t, res.BleveSearchResult.Hits, 2)
+	assert.ElementsMatch(t, []string{"doc1", "doc3"}, []string{
+		res.BleveSearchResult.Hits[0].ID,
+		res.BleveSearchResult.Hits[1].ID,
+	})
+}
+
 func TestZigCoreDB_FullTextQueryStringQuery(t *testing.T) {
 	db := openZigSearchTestDB(t)
 	ctx := context.Background()

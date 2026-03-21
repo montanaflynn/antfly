@@ -38,6 +38,7 @@ import (
 	"github.com/antflydb/antfly/src/common"
 	"github.com/antflydb/antfly/src/store/searchwire"
 	"github.com/blevesearch/bleve/v2"
+	blevegeo "github.com/blevesearch/bleve/v2/geo"
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search"
 	"github.com/blevesearch/bleve/v2/search/query"
@@ -1238,7 +1239,7 @@ func encodeTextSearchWire(op uint16, indexName, field, text string, limit, offse
 }
 
 func encodeGeoShapeSearchWire(indexName string, q *query.GeoShapeQuery, limit, offset uint32) ([]byte, bool) {
-	if q == nil || q.Field() == "" || q.Geometry == nil || q.Geometry.Shape == nil {
+	if q == nil || q.Field() == "" || q.Geometry.Shape == nil {
 		return nil, false
 	}
 
@@ -1555,6 +1556,105 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			InclMin: typed.InclusiveStart != nil && *typed.InclusiveStart,
 			InclMax: typed.InclusiveEnd != nil && *typed.InclusiveEnd,
 		}, true
+	case *query.GeoDistanceQuery:
+		if typed.Field() == "" || typed.Distance == "" || len(typed.Location) != 2 {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{
+			Op:       searchWireOpTextGeoDistance,
+			Field:    typed.Field(),
+			Lon:      typed.Location[0],
+			Lat:      typed.Location[1],
+			Distance: typed.Distance,
+		}, true
+	case *query.GeoBoundingBoxQuery:
+		if typed.Field() == "" || len(typed.TopLeft) != 2 || len(typed.BottomRight) != 2 {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{
+			Op:             searchWireOpTextGeoBBox,
+			Field:          typed.Field(),
+			TopLeftLon:     typed.TopLeft[0],
+			TopLeftLat:     typed.TopLeft[1],
+			BottomRightLon: typed.BottomRight[0],
+			BottomRightLat: typed.BottomRight[1],
+		}, true
+	case *query.GeoBoundingPolygonQuery:
+		if typed.Field() == "" || len(typed.Points) == 0 {
+			return searchwire.TextClause{}, false
+		}
+		points := make([]blevegeo.Point, len(typed.Points))
+		copy(points, typed.Points)
+		return searchwire.TextClause{
+			Op:     searchWireOpTextGeoPolygon,
+			Field:  typed.Field(),
+			Points: points,
+		}, true
+	case *query.GeoShapeQuery:
+		if typed.Field() == "" || typed.Geometry.Shape == nil {
+			return searchwire.TextClause{}, false
+		}
+		relation := typed.Geometry.Relation
+		if relation == "" {
+			relation = "intersects"
+		}
+		switch relation {
+		case "intersects", "within", "contains":
+		default:
+			return searchwire.TextClause{}, false
+		}
+		raw, err := typed.Geometry.Shape.Value()
+		if err != nil {
+			return searchwire.TextClause{}, false
+		}
+		var parsed struct {
+			Type        string          `json:"type"`
+			Coordinates json.RawMessage `json:"coordinates"`
+		}
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			return searchwire.TextClause{}, false
+		}
+		switch strings.ToLower(parsed.Type) {
+		case "polygon":
+			var coordinates [][][]float64
+			if err := json.Unmarshal(parsed.Coordinates, &coordinates); err != nil || len(coordinates) == 0 {
+				return searchwire.TextClause{}, false
+			}
+			polygon, ok := normalizeSearchWireGeoShapePolygon(coordinates[0])
+			if !ok {
+				return searchwire.TextClause{}, false
+			}
+			return searchwire.TextClause{
+				Op:            searchWireOpTextGeoShape,
+				Field:         typed.Field(),
+				Relation:      relation,
+				ShapePolygons: [][]blevegeo.Point{polygon},
+			}, true
+		case "multipolygon":
+			var coordinates [][][][]float64
+			if err := json.Unmarshal(parsed.Coordinates, &coordinates); err != nil || len(coordinates) == 0 {
+				return searchwire.TextClause{}, false
+			}
+			polygons := make([][]blevegeo.Point, 0, len(coordinates))
+			for _, polygonCoords := range coordinates {
+				if len(polygonCoords) == 0 {
+					return searchwire.TextClause{}, false
+				}
+				polygon, ok := normalizeSearchWireGeoShapePolygon(polygonCoords[0])
+				if !ok {
+					return searchwire.TextClause{}, false
+				}
+				polygons = append(polygons, polygon)
+			}
+			return searchwire.TextClause{
+				Op:            searchWireOpTextGeoShape,
+				Field:         typed.Field(),
+				Relation:      relation,
+				ShapePolygons: polygons,
+			}, true
+		default:
+			return searchwire.TextClause{}, false
+		}
 	case *query.DocIDQuery:
 		if len(typed.IDs) == 0 {
 			return searchwire.TextClause{}, false

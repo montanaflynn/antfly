@@ -236,6 +236,54 @@ func TestRemoteIndexSearchInContext_UsesWireForBoolWithFuzzyClause(t *testing.T)
 	require.Equal(t, "doc-1", res.Hits[0].ID)
 }
 
+func TestRemoteIndexSearchInContext_UsesWireForBoolWithGeoClauses(t *testing.T) {
+	mustDistance := bleve.NewGeoDistanceQuery(-122.4194, 37.7749, "2km")
+	mustDistance.SetField("location")
+	mustShape, err := query.NewGeoShapeQuery([][][][]float64{
+		{{{-122.6, 37.9}, {-122.2, 37.9}, {-122.2, 37.7}, {-122.6, 37.7}, {-122.6, 37.9}}},
+	}, "polygon", "intersects")
+	require.NoError(t, err)
+	mustShape.SetField("location")
+	boolQ := query.NewBooleanQuery([]query.Query{mustDistance, mustShape}, nil, nil)
+	req := bleve.NewSearchRequestOptions(boolQ, 10, 0, false)
+
+	client := &http.Client{Transport: remoteIndexRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Helper()
+		require.Equal(t, searchWireContentType, r.Header.Get("Content-Type"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Equal(t, searchWireMagic, binary.LittleEndian.Uint32(body[0:4]))
+		require.Equal(t, searchWireOpTextBool, binary.LittleEndian.Uint16(body[6:8]))
+		boolReq, err := searchwire.DecodeTextBoolRequest(body)
+		require.NoError(t, err)
+		require.Len(t, boolReq.Must, 2)
+		require.Equal(t, searchWireOpTextGeoDistance, boolReq.Must[0].Op)
+		require.Equal(t, "location", boolReq.Must[0].Field)
+		require.Equal(t, "2km", boolReq.Must[0].Distance)
+		require.Equal(t, searchWireOpTextGeoShape, boolReq.Must[1].Op)
+		require.Equal(t, "intersects", boolReq.Must[1].Relation)
+		require.Len(t, boolReq.Must[1].ShapePolygons, 1)
+
+		header := make(http.Header)
+		header.Set("Content-Type", searchWireContentType)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(bytes.NewReader(makeRemoteIndexWireResponse(searchWireOpTextBool, 1, []remoteIndexWireHit{{id: "doc-1", score: 1.0}}))),
+		}, nil
+	})}
+
+	idx, err := NewRemoteIndex(client, []string{"http://wire-search"}, types.ID(1))
+	require.NoError(t, err)
+
+	res, err := idx.SearchInContext(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, uint64(1), res.Total)
+	require.Len(t, res.Hits, 1)
+	require.Equal(t, "doc-1", res.Hits[0].ID)
+}
+
 func TestRemoteIndexSearchInContext_UsesWireForMatchAll(t *testing.T) {
 	req := bleve.NewSearchRequestOptions(query.NewMatchAllQuery(), 10, 0, false)
 
