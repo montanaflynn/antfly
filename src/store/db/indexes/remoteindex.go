@@ -60,6 +60,7 @@ const (
 	searchWireOpTextFuzzy       uint16 = searchwire.OpTextFuzzy
 	searchWireOpTextMatchAll    uint16 = searchwire.OpTextMatchAll
 	searchWireOpTextMatchNone   uint16 = searchwire.OpTextMatchNone
+	searchWireOpTextDateRange   uint16 = searchwire.OpTextDateRange
 )
 
 type FieldFilter struct {
@@ -1017,6 +1018,11 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 		return searchwire.EncodeTextMatchAllRequest("full_text_index", uint32(req.Size), uint32(req.From)), searchWireOpTextMatchAll, true
 	case *query.MatchNoneQuery:
 		return searchwire.EncodeTextMatchNoneRequest("full_text_index", uint32(req.Size), uint32(req.From)), searchWireOpTextMatchNone, true
+	case *query.DateRangeStringQuery:
+		if typed.Field() == "" {
+			return nil, 0, false
+		}
+		return searchwire.EncodeTextDateRangeRequest("full_text_index", typed.Field(), typed.Start, typed.End, typed.InclusiveStart, typed.InclusiveEnd, typed.DateTimeParserName(), uint32(req.Size), uint32(req.From)), searchWireOpTextDateRange, true
 	case *query.BooleanQuery:
 		if body, ok := encodeBoolTextSearchWire("full_text_index", typed, uint32(req.Size), uint32(req.From)); ok {
 			return body, searchWireOpTextBool, true

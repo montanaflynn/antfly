@@ -3739,6 +3739,8 @@ func (s *DBImpl) searchWireFastPath(ctx context.Context, encodedRequest []byte, 
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	case searchWireOpTextMatchNone:
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextDateRange:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	default:
 		return nil, fmt.Errorf("unsupported search wire op: %d", op)
 	}
@@ -3844,6 +3846,18 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 			bleveReq = bleve.NewSearchRequestOptions(query.NewMatchNoneQuery(), int(textReq.Limit), int(textReq.Offset), false)
 			indexName = textReq.IndexName
 		}
+	case searchWireOpTextDateRange:
+		rangeReq, decodeErr := decodeSearchWireTextDateRangeRequest(encodedRequest)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		q := query.NewDateRangeStringInclusiveQuery(rangeReq.Start, rangeReq.End, rangeReq.InclusiveStart, rangeReq.InclusiveEnd)
+		q.SetField(rangeReq.Field)
+		if rangeReq.DateTimeParser != "" {
+			q.SetDateTimeParser(rangeReq.DateTimeParser)
+		}
+		bleveReq = bleve.NewSearchRequestOptions(q, int(rangeReq.Limit), int(rangeReq.Offset), false)
+		indexName = rangeReq.IndexName
 	default:
 		return nil, fmt.Errorf("unsupported text wire op: %d", op)
 	}

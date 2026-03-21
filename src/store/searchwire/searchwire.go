@@ -27,6 +27,7 @@ const (
 	OpTextFuzzy       uint16 = 10
 	OpTextMatchAll    uint16 = 11
 	OpTextMatchNone   uint16 = 12
+	OpTextDateRange   uint16 = 13
 )
 
 var ErrInvalid = errors.New("invalid search wire payload")
@@ -74,6 +75,18 @@ type TextFuzzyRequest struct {
 	Auto      bool
 	Limit     uint32
 	Offset    uint32
+}
+
+type TextDateRangeRequest struct {
+	IndexName      string
+	Field          string
+	Start          string
+	End            string
+	InclusiveStart *bool
+	InclusiveEnd   *bool
+	DateTimeParser string
+	Limit          uint32
+	Offset         uint32
 }
 
 type Hit struct {
@@ -231,6 +244,57 @@ func EncodeTextMatchAllRequest(indexName string, limit, offset uint32) []byte {
 
 func EncodeTextMatchNoneRequest(indexName string, limit, offset uint32) []byte {
 	return EncodeTextRequest(OpTextMatchNone, indexName, "", "", limit, offset)
+}
+
+func EncodeTextDateRangeRequest(indexName, field, start, end string, inclusiveStart, inclusiveEnd *bool, parser string, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 4 + 2
+	out := make([]byte, headerLen+len(indexName)+len(field)+len(start)+len(end)+len(parser))
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], Magic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], Version)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], OpTextDateRange)
+	cursor += 2
+	var flags uint32
+	if inclusiveStart != nil {
+		flags |= 1 << 0
+		if *inclusiveStart {
+			flags |= 1 << 1
+		}
+	}
+	if inclusiveEnd != nil {
+		flags |= 1 << 2
+		if *inclusiveEnd {
+			flags |= 1 << 3
+		}
+	}
+	binary.LittleEndian.PutUint32(out[cursor:], flags)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], uint32(len(start)))
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], uint32(len(end)))
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(parser)))
+	cursor += 2
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	copy(out[cursor:], field)
+	cursor += len(field)
+	copy(out[cursor:], start)
+	cursor += len(start)
+	copy(out[cursor:], end)
+	cursor += len(end)
+	copy(out[cursor:], parser)
+	return out
 }
 
 func EncodeTextBoolRequest(indexName string, must, should, mustNot []TextClause, limit, offset uint32) []byte {
@@ -408,6 +472,58 @@ func DecodeTextFuzzyRequest(raw []byte) (TextFuzzyRequest, error) {
 		Auto:      auto,
 		Limit:     limit,
 		Offset:    offset,
+	}, nil
+}
+
+func DecodeTextDateRangeRequest(raw []byte) (TextDateRangeRequest, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 4 + 2
+	if len(raw) < headerLen {
+		return TextDateRangeRequest{}, ErrInvalid
+	}
+	if op, ok := Op(raw); !ok || op != OpTextDateRange {
+		return TextDateRangeRequest{}, ErrInvalid
+	}
+	flags := binary.LittleEndian.Uint32(raw[8:12])
+	limit := binary.LittleEndian.Uint32(raw[12:16])
+	offset := binary.LittleEndian.Uint32(raw[16:20])
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
+	startLen := int(binary.LittleEndian.Uint32(raw[24:28]))
+	endLen := int(binary.LittleEndian.Uint32(raw[28:32]))
+	parserLen := int(binary.LittleEndian.Uint16(raw[32:34]))
+	if len(raw) < headerLen+indexNameLen+fieldLen+startLen+endLen+parserLen {
+		return TextDateRangeRequest{}, ErrInvalid
+	}
+	cursor := headerLen
+	indexName := string(raw[cursor : cursor+indexNameLen])
+	cursor += indexNameLen
+	field := string(raw[cursor : cursor+fieldLen])
+	cursor += fieldLen
+	start := string(raw[cursor : cursor+startLen])
+	cursor += startLen
+	end := string(raw[cursor : cursor+endLen])
+	cursor += endLen
+	parser := string(raw[cursor : cursor+parserLen])
+	var inclusiveStart *bool
+	var inclusiveEnd *bool
+	if flags&(1<<0) != 0 {
+		value := flags&(1<<1) != 0
+		inclusiveStart = &value
+	}
+	if flags&(1<<2) != 0 {
+		value := flags&(1<<3) != 0
+		inclusiveEnd = &value
+	}
+	return TextDateRangeRequest{
+		IndexName:      indexName,
+		Field:          field,
+		Start:          start,
+		End:            end,
+		InclusiveStart: inclusiveStart,
+		InclusiveEnd:   inclusiveEnd,
+		DateTimeParser: parser,
+		Limit:          limit,
+		Offset:         offset,
 	}, nil
 }
 

@@ -1006,6 +1006,22 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 			return nil, err
 		}
 		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextDateRange:
+		req, err := decodeSearchWireTextDateRangeRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		q := blevequery.NewDateRangeStringInclusiveQuery(req.Start, req.End, req.InclusiveStart, req.InclusiveEnd)
+		q.SetField(req.Field)
+		if req.DateTimeParser != "" {
+			q.SetDateTimeParser(req.DateTimeParser)
+		}
+		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
 	default:
 		return nil, zigUnsupported("Search wire op not implemented")
 	}

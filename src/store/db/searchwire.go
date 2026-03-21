@@ -22,6 +22,7 @@ const (
 	searchWireOpTextFuzzy       uint16 = searchwire.OpTextFuzzy
 	searchWireOpTextMatchAll    uint16 = searchwire.OpTextMatchAll
 	searchWireOpTextMatchNone   uint16 = searchwire.OpTextMatchNone
+	searchWireOpTextDateRange   uint16 = searchwire.OpTextDateRange
 )
 
 type searchWireDenseRequest = searchwire.DenseRequest
@@ -33,6 +34,7 @@ type searchWireTextPrefixRequest = searchwire.TextRequest
 type searchWireTextWildcardRequest = searchwire.TextRequest
 type searchWireTextRegexpRequest = searchwire.TextRequest
 type searchWireTextFuzzyRequest = searchwire.TextFuzzyRequest
+type searchWireTextDateRangeRequest = searchwire.TextDateRangeRequest
 type searchWireTextClause = searchwire.TextClause
 type searchWireTextBoolRequest = searchwire.TextBoolRequest
 type searchWireHit = searchwire.Hit
@@ -91,6 +93,10 @@ func encodeSearchWireTextMatchNoneRequest(indexName string, limit, offset uint32
 	return searchwire.EncodeTextMatchNoneRequest(indexName, limit, offset)
 }
 
+func encodeSearchWireTextDateRangeRequest(indexName, field, start, end string, inclusiveStart, inclusiveEnd *bool, parser string, limit, offset uint32) []byte {
+	return searchwire.EncodeTextDateRangeRequest(indexName, field, start, end, inclusiveStart, inclusiveEnd, parser, limit, offset)
+}
+
 func encodeSearchWireTextBoolRequest(indexName string, must, should, mustNot []searchWireTextClause, limit, offset uint32) []byte {
 	return searchwire.EncodeTextBoolRequest(indexName, must, should, mustNot, limit, offset)
 }
@@ -133,6 +139,10 @@ func decodeSearchWireTextMatchAllRequest(raw []byte) (searchWireTextMatchRequest
 
 func decodeSearchWireTextMatchNoneRequest(raw []byte) (searchWireTextMatchRequest, error) {
 	return searchwire.DecodeTextRequest(raw, searchwire.OpTextMatchNone)
+}
+
+func decodeSearchWireTextDateRangeRequest(raw []byte) (searchWireTextDateRangeRequest, error) {
+	return searchwire.DecodeTextDateRangeRequest(raw)
 }
 
 func decodeSearchWireTextBoolRequest(raw []byte) (searchWireTextBoolRequest, error) {
