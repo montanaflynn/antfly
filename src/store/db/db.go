@@ -4068,7 +4068,11 @@ func buildSearchWireBoolQuery(req searchWireTextBoolRequest) (query.Query, error
 	if len(must) == 0 && len(should) == 0 && len(mustNot) == 0 {
 		return nil, errSearchWireInvalid
 	}
-	return query.NewBooleanQuery(must, should, mustNot), nil
+	q := query.NewBooleanQuery(must, should, mustNot)
+	if req.MinShould != 0 {
+		q.SetMinShould(float64(req.MinShould))
+	}
+	return q, nil
 }
 
 func buildSearchWireClauseQueries(clauses []searchWireTextClause) ([]query.Query, error) {
@@ -4135,6 +4139,13 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 			q.SetFuzziness(int(clause.Fuzziness))
 		}
 		return q, nil
+	case searchWireOpTextBool:
+		boolReq := searchWireTextBoolRequest{
+			Must:    clause.Must,
+			Should:  clause.Should,
+			MustNot: clause.MustNot,
+		}
+		return buildSearchWireBoolQuery(boolReq)
 	case searchWireOpTextQueryString:
 		return query.NewQueryStringQuery(clause.Text), nil
 	case searchWireOpTextNumericRange:

@@ -153,6 +153,33 @@ func BenchmarkRemoteIndexSearchProtocols(b *testing.B) {
 		{id: "doc-1", score: 1.0},
 		{id: "doc-2", score: 0.7},
 	})
+	nestedMust := query.NewMatchQuery("hello")
+	nestedMust.SetField("body")
+	nestedShould := query.NewPrefixQuery("wo")
+	nestedShould.SetField("body")
+	nestedBoolReq := bleve.NewSearchRequestOptions(query.NewBooleanQuery([]query.Query{
+		query.NewBooleanQuery([]query.Query{nestedMust}, []query.Query{nestedShould}, nil),
+	}, nil, nil), 10, 0, false)
+	nestedBoolJSONResp, err := json.Marshal(&RemoteIndexSearchResult{
+		Total: 2,
+		BleveSearchResult: &bleve.SearchResult{
+			Status:   &bleve.SearchStatus{Total: 1, Successful: 1},
+			Request:  nestedBoolReq,
+			Total:    2,
+			MaxScore: 1.0,
+			Hits: search.DocumentMatchCollection{
+				&search.DocumentMatch{ID: "doc-1", Score: 1.0},
+				&search.DocumentMatch{ID: "doc-2", Score: 0.7},
+			},
+		},
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	nestedBoolWireResp := encodeRemoteIndexWireResponse(searchWireOpTextBool, 2, []remoteIndexWireHit{
+		{id: "doc-1", score: 1.0},
+		{id: "doc-2", score: 0.7},
+	})
 
 	denseReq := &RemoteIndexSearchRequest{
 		Limit: 10,
@@ -196,6 +223,8 @@ func BenchmarkRemoteIndexSearchProtocols(b *testing.B) {
 				respBody = denseWireResp
 			case searchWireOpTextMatch:
 				respBody = textWireResp
+			case searchWireOpTextBool:
+				respBody = nestedBoolWireResp
 			default:
 				return &http.Response{
 					StatusCode: http.StatusBadRequest,
@@ -221,6 +250,11 @@ func BenchmarkRemoteIndexSearchProtocols(b *testing.B) {
 			}, nil
 		}
 		respBody := textJSONResp
+		if req.BleveSearchRequest != nil {
+			if _, ok := req.BleveSearchRequest.Query.(*query.BooleanQuery); ok {
+				respBody = nestedBoolJSONResp
+			}
+		}
 		if len(req.VectorSearches) > 0 {
 			respBody = denseJSONResp
 		}
@@ -277,6 +311,24 @@ func BenchmarkRemoteIndexSearchProtocols(b *testing.B) {
 				"embeddings_index": {0.1, 0.2},
 			}
 			if _, err := idx.RemoteSearch(context.Background(), &reqCopy); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("NestedBool/JSON", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if _, err := remoteIndexJSONBleveSearch(context.Background(), idx, nestedBoolReq); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("NestedBool/Wire", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if _, err := idx.SearchInContext(context.Background(), nestedBoolReq); err != nil {
 				b.Fatal(err)
 			}
 		}

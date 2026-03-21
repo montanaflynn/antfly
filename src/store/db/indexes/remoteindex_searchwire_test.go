@@ -284,6 +284,69 @@ func TestRemoteIndexSearchInContext_UsesWireForBoolWithGeoClauses(t *testing.T) 
 	require.Equal(t, "doc-1", res.Hits[0].ID)
 }
 
+func TestRemoteIndexSearchInContext_UsesWireForNestedBool(t *testing.T) {
+	must := query.NewMatchQuery("alpha")
+	must.SetField("content")
+	should := query.NewPrefixQuery("sm")
+	should.SetField("title")
+	nested := query.NewBooleanQuery([]query.Query{must}, []query.Query{should}, nil)
+	boolQ := query.NewBooleanQuery([]query.Query{nested}, nil, nil)
+	req := bleve.NewSearchRequestOptions(boolQ, 10, 0, false)
+
+	client := &http.Client{Transport: remoteIndexRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Helper()
+		require.Equal(t, searchWireContentType, r.Header.Get("Content-Type"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		boolReq, err := searchwire.DecodeTextBoolRequest(body)
+		require.NoError(t, err)
+		require.Len(t, boolReq.Must, 1)
+		require.Equal(t, searchWireOpTextBool, boolReq.Must[0].Op)
+		require.Len(t, boolReq.Must[0].Must, 1)
+		require.Equal(t, searchWireOpTextMatch, boolReq.Must[0].Must[0].Op)
+		require.Len(t, boolReq.Must[0].Should, 1)
+		require.Equal(t, searchWireOpTextPrefix, boolReq.Must[0].Should[0].Op)
+
+		header := make(http.Header)
+		header.Set("Content-Type", searchWireContentType)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(bytes.NewReader(makeRemoteIndexWireResponse(searchWireOpTextBool, 1, []remoteIndexWireHit{{id: "doc-1", score: 1.0}}))),
+		}, nil
+	})}
+
+	idx, err := NewRemoteIndex(client, []string{"http://wire-search"}, types.ID(1))
+	require.NoError(t, err)
+
+	res, err := idx.SearchInContext(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, uint64(1), res.Total)
+	require.Len(t, res.Hits, 1)
+	require.Equal(t, "doc-1", res.Hits[0].ID)
+}
+
+func TestRemoteIndexSearchInContext_UsesWireForDisjunctionMinShould(t *testing.T) {
+	left := query.NewMatchQuery("hello")
+	left.SetField("body")
+	right := query.NewMatchQuery("world")
+	right.SetField("body")
+	disj := query.NewDisjunctionQuery([]query.Query{left, right})
+	disj.SetMin(2)
+
+	body, op, ok := encodeSimpleTextSearchWire(bleve.NewSearchRequestOptions(disj, 10, 0, false))
+	require.True(t, ok)
+	require.Equal(t, searchWireOpTextBool, op)
+
+	boolReq, err := searchwire.DecodeTextBoolRequest(body)
+	require.NoError(t, err)
+	require.Equal(t, uint16(2), boolReq.MinShould)
+	require.Len(t, boolReq.Should, 2)
+	require.Equal(t, searchWireOpTextMatch, boolReq.Should[0].Op)
+	require.Equal(t, searchWireOpTextMatch, boolReq.Should[1].Op)
+}
+
 func TestRemoteIndexSearchInContext_UsesWireForMatchAll(t *testing.T) {
 	req := bleve.NewSearchRequestOptions(query.NewMatchAllQuery(), 10, 0, false)
 

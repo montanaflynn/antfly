@@ -165,7 +165,11 @@ func encodeSearchWireTextMultiPhraseRequest(indexName, field string, terms [][]s
 }
 
 func encodeSearchWireTextBoolRequest(indexName string, must, should, mustNot []searchWireTextClause, limit, offset uint32) []byte {
-	return searchwire.EncodeTextBoolRequest(indexName, must, should, mustNot, limit, offset)
+	return searchwire.EncodeTextBoolRequest(indexName, must, should, mustNot, 0, limit, offset)
+}
+
+func encodeSearchWireTextBoolRequestWithMin(indexName string, must, should, mustNot []searchWireTextClause, minShould uint16, limit, offset uint32) []byte {
+	return searchwire.EncodeTextBoolRequest(indexName, must, should, mustNot, minShould, limit, offset)
 }
 
 func decodeSearchWireTextMatchRequest(raw []byte) (searchWireTextMatchRequest, error) {

@@ -404,6 +404,48 @@ func TestZigCoreDB_FullTextDisjunctionQuery(t *testing.T) {
 	})
 }
 
+func TestZigCoreDB_FullTextDisjunctionQueryWithMinShould(t *testing.T) {
+	db := openZigSearchTestDB(t)
+	ctx := context.Background()
+
+	fullTextConfig := indexes.NewFullTextIndexConfig("full_text_index", false)
+	require.NoError(t, db.AddIndex(*fullTextConfig))
+
+	for key, doc := range map[string]map[string]any{
+		"doc1": {"content": "alpha only", "title": "alpha"},
+		"doc2": {"content": "gamma only", "title": "gamma"},
+		"doc3": {"content": "alpha gamma", "title": "both"},
+	} {
+		docJSON, err := json.Marshal(doc)
+		require.NoError(t, err)
+		require.NoError(t, db.Batch(ctx, [][2][]byte{{[]byte(key), docJSON}}, nil, Op_SyncLevelFullText))
+	}
+
+	left := query.NewMatchQuery("alpha")
+	left.SetField("content")
+	right := query.NewMatchQuery("gamma")
+	right.SetField("content")
+	disj := query.NewDisjunctionQuery([]query.Query{left, right})
+	disj.SetMin(2)
+	req := &indexes.RemoteIndexSearchRequest{
+		BleveSearchRequest: bleve.NewSearchRequest(disj),
+		Limit:              10,
+	}
+	req.BleveSearchRequest.Size = 10
+
+	reqBytes, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	resBytes, err := db.Search(ctx, reqBytes)
+	require.NoError(t, err)
+
+	var res indexes.RemoteIndexSearchResult
+	require.NoError(t, json.Unmarshal(resBytes, &res))
+	require.NotNil(t, res.BleveSearchResult)
+	require.Len(t, res.BleveSearchResult.Hits, 1)
+	assert.Equal(t, "doc3", res.BleveSearchResult.Hits[0].ID)
+}
+
 func TestZigCoreDB_FullTextConjunctionQuery(t *testing.T) {
 	db := openZigSearchTestDB(t)
 	ctx := context.Background()
@@ -1438,6 +1480,51 @@ func TestZigCoreDB_FullTextBooleanQueryGeoShape(t *testing.T) {
 	require.NotNil(t, res.BleveSearchResult)
 	require.Len(t, res.BleveSearchResult.Hits, 2)
 	assert.ElementsMatch(t, []string{"doc1", "doc3"}, []string{
+		res.BleveSearchResult.Hits[0].ID,
+		res.BleveSearchResult.Hits[1].ID,
+	})
+}
+
+func TestZigCoreDB_FullTextBooleanQueryNestedBool(t *testing.T) {
+	db := openZigSearchTestDB(t)
+	ctx := context.Background()
+
+	fullTextConfig := indexes.NewFullTextIndexConfig("full_text_index", false)
+	require.NoError(t, db.AddIndex(*fullTextConfig))
+
+	for key, doc := range map[string]map[string]any{
+		"doc1": {"content": "alpha", "title": "small"},
+		"doc2": {"content": "alpha", "title": "other"},
+		"doc3": {"content": "beta", "title": "small"},
+	} {
+		docJSON, err := json.Marshal(doc)
+		require.NoError(t, err)
+		require.NoError(t, db.Batch(ctx, [][2][]byte{{[]byte(key), docJSON}}, nil, Op_SyncLevelFullText))
+	}
+
+	must := query.NewMatchQuery("alpha")
+	must.SetField("content")
+	should := query.NewPrefixQuery("sm")
+	should.SetField("title")
+	nested := query.NewBooleanQuery([]query.Query{must}, []query.Query{should}, nil)
+	boolQ := query.NewBooleanQuery([]query.Query{nested}, nil, nil)
+
+	req := &indexes.RemoteIndexSearchRequest{
+		BleveSearchRequest: bleve.NewSearchRequest(boolQ),
+		Limit:              10,
+	}
+	req.BleveSearchRequest.Size = 10
+
+	reqBytes, err := json.Marshal(req)
+	require.NoError(t, err)
+	resBytes, err := db.Search(ctx, reqBytes)
+	require.NoError(t, err)
+
+	var res indexes.RemoteIndexSearchResult
+	require.NoError(t, json.Unmarshal(resBytes, &res))
+	require.NotNil(t, res.BleveSearchResult)
+	require.Len(t, res.BleveSearchResult.Hits, 2)
+	assert.ElementsMatch(t, []string{"doc1", "doc2"}, []string{
 		res.BleveSearchResult.Hits[0].ID,
 		res.BleveSearchResult.Hits[1].ID,
 	})

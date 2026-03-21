@@ -2738,7 +2738,11 @@ func normalizeBackendTextQuery(q blevequery.Query, analysisConfig *schema.Analys
 			}
 			items = append(items, item)
 		}
-		return map[string]any{"disjuncts": items}, nil
+		payload := map[string]any{"disjuncts": items}
+		if typed.Min != 0 {
+			payload["min_should"] = typed.Min
+		}
+		return payload, nil
 	case *blevequery.ConjunctionQuery:
 		if len(typed.Conjuncts) == 0 {
 			return nil, zigUnsupported("Search bleve query type")
@@ -2767,6 +2771,9 @@ func normalizeBackendTextQuery(q blevequery.Query, analysisConfig *schema.Analys
 				return nil, err
 			}
 			boolPayload["should"] = items
+			if shouldDisj, ok := typed.Should.(*blevequery.DisjunctionQuery); ok && shouldDisj.Min != 0 {
+				boolPayload["min_should"] = shouldDisj.Min
+			}
 		}
 		if typed.MustNot != nil {
 			items, err := normalizeBackendTextQueryArray(typed.MustNot, analysisConfig, indexMapping, false)

@@ -181,6 +181,58 @@ func TestSearchWireBoolFastPath_PreservesMatchOperator(t *testing.T) {
 	require.Equal(t, "doc-3", hits[0].ID)
 }
 
+func TestSearchWireBoolFastPath_PreservesMinShould(t *testing.T) {
+	dir := t.TempDir()
+	db := &DBImpl{logger: zaptest.NewLogger(t)}
+	require.NoError(t, db.Open(dir, false, nil, types.Range{nil, []byte{0xFF}}))
+	defer db.Close()
+
+	tableSchema := &schema.TableSchema{
+		DefaultType: "default",
+		DocumentSchemas: map[string]schema.DocumentSchema{
+			"default": {
+				Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"body": map[string]any{"type": "string"},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, db.UpdateSchema(tableSchema))
+	require.NoError(t, db.AddIndex(*indexes.NewFullTextIndexConfig("full_text_index_v0", false)))
+
+	ctx := context.Background()
+	for _, doc := range []struct {
+		id   string
+		body string
+	}{
+		{id: "doc-1", body: "hello"},
+		{id: "doc-2", body: "world"},
+		{id: "doc-3", body: "hello world"},
+	} {
+		payload, err := json.Marshal(map[string]any{"body": doc.body})
+		require.NoError(t, err)
+		err = db.Batch(ctx, [][2][]byte{{[]byte(doc.id), payload}}, nil, Op_SyncLevelFullText)
+		if err != nil && !errors.Is(err, ErrPartialSuccess) {
+			require.NoError(t, err)
+		}
+	}
+
+	reqBytes := encodeSearchWireTextBoolRequestWithMin("full_text_index", nil, []searchWireTextClause{
+		{Op: searchWireOpTextMatch, Field: "body", Text: "hello"},
+		{Op: searchWireOpTextMatch, Field: "body", Text: "world"},
+	}, nil, 2, 10, 0)
+	resBytes, err := db.Search(ctx, reqBytes)
+	require.NoError(t, err)
+	total, hits, err := searchwire.DecodeHits(resBytes, searchWireOpTextBool)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), total)
+	require.Len(t, hits, 1)
+	require.Equal(t, "doc-3", hits[0].ID)
+}
+
 func TestSearchWireBoolFastPath_PreservesMatchPhraseAutoFuzziness(t *testing.T) {
 	dir := t.TempDir()
 	db := &DBImpl{logger: zaptest.NewLogger(t)}
@@ -664,4 +716,67 @@ func TestDBImpl_FullTextBooleanGeoShapeQuery(t *testing.T) {
 	require.NoError(t, json.Unmarshal(resBytes, &res))
 	require.NotNil(t, res.BleveSearchResult)
 	require.Len(t, res.BleveSearchResult.Hits, 2)
+}
+
+func TestSearchWireBoolFastPath_SupportsNestedBoolClauses(t *testing.T) {
+	dir := t.TempDir()
+	db := &DBImpl{logger: zaptest.NewLogger(t)}
+	require.NoError(t, db.Open(dir, false, nil, types.Range{nil, []byte{0xFF}}))
+	defer db.Close()
+
+	tableSchema := &schema.TableSchema{
+		DefaultType: "default",
+		DocumentSchemas: map[string]schema.DocumentSchema{
+			"default": {
+				Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"content": map[string]any{"type": "string"},
+						"title":   map[string]any{"type": "string"},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, db.UpdateSchema(tableSchema))
+	require.NoError(t, db.AddIndex(*indexes.NewFullTextIndexConfig("full_text_index_v0", false)))
+
+	ctx := context.Background()
+	for _, doc := range []struct {
+		id      string
+		content string
+		title   string
+	}{
+		{id: "doc-1", content: "alpha", title: "small"},
+		{id: "doc-2", content: "alpha", title: "other"},
+		{id: "doc-3", content: "beta", title: "small"},
+	} {
+		payload, err := json.Marshal(map[string]any{"content": doc.content, "title": doc.title})
+		require.NoError(t, err)
+		err = db.Batch(ctx, [][2][]byte{{[]byte(doc.id), payload}}, nil, Op_SyncLevelFullText)
+		if err != nil && !errors.Is(err, ErrPartialSuccess) {
+			require.NoError(t, err)
+		}
+	}
+
+	reqBytes := encodeSearchWireTextBoolRequest("full_text_index", []searchWireTextClause{{
+		Op: searchWireOpTextBool,
+		Must: []searchWireTextClause{{
+			Op:    searchWireOpTextMatch,
+			Field: "content",
+			Text:  "alpha",
+		}},
+		Should: []searchWireTextClause{{
+			Op:    searchWireOpTextPrefix,
+			Field: "title",
+			Text:  "sm",
+		}},
+	}}, nil, nil, 10, 0)
+	resBytes, err := db.Search(ctx, reqBytes)
+	require.NoError(t, err)
+
+	total, hits, err := searchwire.DecodeHits(resBytes, searchWireOpTextBool)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), total)
+	require.Len(t, hits, 2)
 }

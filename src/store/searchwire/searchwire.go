@@ -95,6 +95,10 @@ type TextClause struct {
 	TermSets       [][]string
 	Points         []blevegeo.Point
 	ShapePolygons  [][]blevegeo.Point
+	Must           []TextClause
+	Should         []TextClause
+	MustNot        []TextClause
+	MinShould      uint16
 }
 
 type TextBoolRequest struct {
@@ -102,6 +106,7 @@ type TextBoolRequest struct {
 	Must      []TextClause
 	Should    []TextClause
 	MustNot   []TextClause
+	MinShould uint16
 	Limit     uint32
 	Offset    uint32
 }
@@ -873,8 +878,8 @@ func EncodeTextMultiPhraseRequest(indexName, field string, terms [][]string, fuz
 	return out
 }
 
-func EncodeTextBoolRequest(indexName string, must, should, mustNot []TextClause, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2
+func EncodeTextBoolRequest(indexName string, must, should, mustNot []TextClause, minShould uint16, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2 + 2
 	totalClausesLen := encodedClausesLen(must) + encodedClausesLen(should) + encodedClausesLen(mustNot)
 	out := make([]byte, headerLen+len(indexName)+totalClausesLen)
 	cursor := 0
@@ -898,6 +903,8 @@ func EncodeTextBoolRequest(indexName string, must, should, mustNot []TextClause,
 	cursor += 2
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(mustNot)))
 	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], minShould)
+	cursor += 2
 	copy(out[cursor:], indexName)
 	cursor += len(indexName)
 	encodeClauses(out, &cursor, must)
@@ -907,7 +914,7 @@ func EncodeTextBoolRequest(indexName string, must, should, mustNot []TextClause,
 }
 
 func EncodeTextRequest(op uint16, indexName, field, text, analyzer string, prefix, fuzziness uint16, auto bool, operator uint8, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 1 + 1
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 2 + 1 + 1
 	out := make([]byte, headerLen+len(indexName)+len(field)+len(text)+len(analyzer))
 	cursor := 0
 	binary.LittleEndian.PutUint32(out[cursor:], Magic)
@@ -952,7 +959,7 @@ func EncodeTextRequest(op uint16, indexName, field, text, analyzer string, prefi
 }
 
 func DecodeTextRequest(raw []byte, opExpected uint16) (TextRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 1 + 1
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 2 + 1 + 1
 	if len(raw) < headerLen {
 		return TextRequest{}, ErrInvalid
 	}
@@ -995,7 +1002,7 @@ func DecodeTextRequest(raw []byte, opExpected uint16) (TextRequest, error) {
 }
 
 func DecodeTextBoolRequest(raw []byte) (TextBoolRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2 + 2
 	if len(raw) < headerLen {
 		return TextBoolRequest{}, ErrInvalid
 	}
@@ -1008,6 +1015,7 @@ func DecodeTextBoolRequest(raw []byte) (TextBoolRequest, error) {
 	mustCount := int(binary.LittleEndian.Uint16(raw[22:24]))
 	shouldCount := int(binary.LittleEndian.Uint16(raw[24:26]))
 	mustNotCount := int(binary.LittleEndian.Uint16(raw[26:28]))
+	minShould := binary.LittleEndian.Uint16(raw[28:30])
 	if len(raw) < headerLen+indexNameLen {
 		return TextBoolRequest{}, ErrInvalid
 	}
@@ -1036,6 +1044,7 @@ func DecodeTextBoolRequest(raw []byte) (TextBoolRequest, error) {
 		Must:      must,
 		Should:    should,
 		MustNot:   mustNot,
+		MinShould: minShould,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil
@@ -1721,7 +1730,7 @@ func DecodeHits(raw []byte, expectedOp uint16) (uint64, []Hit, error) {
 func encodedClausesLen(clauses []TextClause) int {
 	total := 0
 	for _, clause := range clauses {
-		total += 2 + 2 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 2 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1 + 1 + 2 + 2 + 2 + 2 +
+		total += 2 + 2 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 2 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1 + 1 + 2 + 2 + 2 + 2 + 2 + 2 + 2 + 2 +
 			len(clause.Field) + len(clause.Text) + len(clause.AltText) + len(clause.Analyzer) + len(clause.Parser) + len(clause.Distance) + len(clause.Relation)
 		for _, term := range clause.Terms {
 			total += 2 + len(term)
@@ -1736,6 +1745,9 @@ func encodedClausesLen(clauses []TextClause) int {
 		for _, polygon := range clause.ShapePolygons {
 			total += 2 + len(polygon)*16
 		}
+		total += encodedClausesLen(clause.Must)
+		total += encodedClausesLen(clause.Should)
+		total += encodedClausesLen(clause.MustNot)
 	}
 	return total
 }
@@ -1810,6 +1822,14 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 		*cursor += 2
 		binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(clause.ShapePolygons)))
 		*cursor += 2
+		binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(clause.Must)))
+		*cursor += 2
+		binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(clause.Should)))
+		*cursor += 2
+		binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(clause.MustNot)))
+		*cursor += 2
+		binary.LittleEndian.PutUint16(out[*cursor:], clause.MinShould)
+		*cursor += 2
 		copy(out[*cursor:], clause.Field)
 		*cursor += len(clause.Field)
 		copy(out[*cursor:], clause.Text)
@@ -1856,13 +1876,16 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 				*cursor += 8
 			}
 		}
+		encodeClauses(out, cursor, clause.Must)
+		encodeClauses(out, cursor, clause.Should)
+		encodeClauses(out, cursor, clause.MustNot)
 	}
 }
 
 func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error) {
 	clauses := make([]TextClause, count)
 	for i := 0; i < count; i++ {
-		if len(raw) < cursor+101 {
+		if len(raw) < cursor+109 {
 			return nil, 0, ErrInvalid
 		}
 		op := binary.LittleEndian.Uint16(raw[cursor : cursor+2])
@@ -1917,6 +1940,14 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 		pointCount := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
 		cursor += 2
 		shapePolygonCount := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
+		cursor += 2
+		mustCount := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
+		cursor += 2
+		shouldCount := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
+		cursor += 2
+		mustNotCount := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
+		cursor += 2
+		minShould := binary.LittleEndian.Uint16(raw[cursor : cursor+2])
 		cursor += 2
 		if len(raw) < cursor+fieldLen+textLen+altTextLen+analyzerLen+parserLen+distanceLen+relationLen {
 			return nil, 0, ErrInvalid
@@ -2001,6 +2032,21 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 			}
 			shapePolygons[j] = polygon
 		}
+		must, next, err := decodeClauses(raw, cursor, mustCount)
+		if err != nil {
+			return nil, 0, err
+		}
+		cursor = next
+		should, next, err := decodeClauses(raw, cursor, shouldCount)
+		if err != nil {
+			return nil, 0, err
+		}
+		cursor = next
+		mustNot, next, err := decodeClauses(raw, cursor, mustNotCount)
+		if err != nil {
+			return nil, 0, err
+		}
+		cursor = next
 		clauses[i] = TextClause{
 			Op:             op,
 			Field:          field,
@@ -2031,6 +2077,10 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 			TermSets:       termSets,
 			Points:         points,
 			ShapePolygons:  shapePolygons,
+			Must:           must,
+			Should:         should,
+			MustNot:        mustNot,
+			MinShould:      minShould,
 		}
 	}
 	return clauses, cursor, nil
@@ -2039,6 +2089,8 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 func validClauseOp(op uint16) bool {
 	switch op {
 	case OpTextMatch, OpTextTerm, OpTextMatchPhrase, OpTextQueryString, OpTextPhrase, OpTextMultiPhrase:
+		return true
+	case OpTextBool:
 		return true
 	case OpTextPrefix, OpTextWildcard, OpTextRegexp:
 		return true
