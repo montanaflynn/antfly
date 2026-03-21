@@ -100,6 +100,7 @@ type TextClause struct {
 	MustNot        []TextClause
 	Filter         []TextClause
 	MinShould      uint16
+	Boost          float32
 }
 
 type TextBoolRequest struct {
@@ -109,6 +110,7 @@ type TextBoolRequest struct {
 	MustNot   []TextClause
 	Filter    []TextClause
 	MinShould uint16
+	Boost     float32
 	Limit     uint32
 	Offset    uint32
 }
@@ -880,8 +882,8 @@ func EncodeTextMultiPhraseRequest(indexName, field string, terms [][]string, fuz
 	return out
 }
 
-func EncodeTextBoolRequest(indexName string, must, should, mustNot, filter []TextClause, minShould uint16, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2 + 2 + 2
+func EncodeTextBoolRequest(indexName string, must, should, mustNot, filter []TextClause, minShould uint16, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2 + 2 + 2 + 4
 	totalClausesLen := encodedClausesLen(must) + encodedClausesLen(should) + encodedClausesLen(mustNot) + encodedClausesLen(filter)
 	out := make([]byte, headerLen+len(indexName)+totalClausesLen)
 	cursor := 0
@@ -909,6 +911,8 @@ func EncodeTextBoolRequest(indexName string, must, should, mustNot, filter []Tex
 	cursor += 2
 	binary.LittleEndian.PutUint16(out[cursor:], minShould)
 	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
+	cursor += 4
 	copy(out[cursor:], indexName)
 	cursor += len(indexName)
 	encodeClauses(out, &cursor, must)
@@ -1007,7 +1011,7 @@ func DecodeTextRequest(raw []byte, opExpected uint16) (TextRequest, error) {
 }
 
 func DecodeTextBoolRequest(raw []byte) (TextBoolRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2 + 2 + 2
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2 + 2 + 2 + 4
 	if len(raw) < headerLen {
 		return TextBoolRequest{}, ErrInvalid
 	}
@@ -1022,6 +1026,7 @@ func DecodeTextBoolRequest(raw []byte) (TextBoolRequest, error) {
 	mustNotCount := int(binary.LittleEndian.Uint16(raw[26:28]))
 	filterCount := int(binary.LittleEndian.Uint16(raw[28:30]))
 	minShould := binary.LittleEndian.Uint16(raw[30:32])
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[32:36]))
 	if len(raw) < headerLen+indexNameLen {
 		return TextBoolRequest{}, ErrInvalid
 	}
@@ -1057,6 +1062,7 @@ func DecodeTextBoolRequest(raw []byte) (TextBoolRequest, error) {
 		MustNot:   mustNot,
 		Filter:    filter,
 		MinShould: minShould,
+		Boost:     boost,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil
@@ -1742,7 +1748,7 @@ func DecodeHits(raw []byte, expectedOp uint16) (uint64, []Hit, error) {
 func encodedClausesLen(clauses []TextClause) int {
 	total := 0
 	for _, clause := range clauses {
-		total += 2 + 2 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 2 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1 + 1 + 2 + 2 + 2 + 2 + 2 + 2 + 2 + 2 + 2 +
+		total += 2 + 2 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 2 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1 + 1 + 2 + 2 + 2 + 2 + 2 + 2 + 2 + 2 + 2 + 4 +
 			len(clause.Field) + len(clause.Text) + len(clause.AltText) + len(clause.Analyzer) + len(clause.Parser) + len(clause.Distance) + len(clause.Relation)
 		for _, term := range clause.Terms {
 			total += 2 + len(term)
@@ -1845,6 +1851,8 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 		*cursor += 2
 		binary.LittleEndian.PutUint16(out[*cursor:], clause.MinShould)
 		*cursor += 2
+		binary.LittleEndian.PutUint32(out[*cursor:], math.Float32bits(clause.Boost))
+		*cursor += 4
 		copy(out[*cursor:], clause.Field)
 		*cursor += len(clause.Field)
 		copy(out[*cursor:], clause.Text)
@@ -1901,7 +1909,7 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error) {
 	clauses := make([]TextClause, count)
 	for i := 0; i < count; i++ {
-		if len(raw) < cursor+111 {
+		if len(raw) < cursor+115 {
 			return nil, 0, ErrInvalid
 		}
 		op := binary.LittleEndian.Uint16(raw[cursor : cursor+2])
@@ -1967,6 +1975,8 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 		cursor += 2
 		minShould := binary.LittleEndian.Uint16(raw[cursor : cursor+2])
 		cursor += 2
+		boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[cursor : cursor+4]))
+		cursor += 4
 		if len(raw) < cursor+fieldLen+textLen+altTextLen+analyzerLen+parserLen+distanceLen+relationLen {
 			return nil, 0, ErrInvalid
 		}
@@ -2105,6 +2115,7 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 			MustNot:        mustNot,
 			Filter:         filter,
 			MinShould:      minShould,
+			Boost:          boost,
 		}
 	}
 	return clauses, cursor, nil

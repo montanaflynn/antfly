@@ -4081,7 +4081,18 @@ func buildSearchWireBoolQuery(req searchWireTextBoolRequest) (query.Query, error
 	if req.MinShould != 0 {
 		q.SetMinShould(float64(req.MinShould))
 	}
+	applySearchWireBoost(q, req.Boost)
 	return q, nil
+}
+
+func applySearchWireBoost(q query.Query, boost float32) query.Query {
+	if q == nil || boost == 0 || boost == 1 {
+		return q
+	}
+	if boosted, ok := q.(interface{ SetBoost(float64) }); ok {
+		boosted.SetBoost(float64(boost))
+	}
+	return q
 }
 
 func buildSearchWireClauseQueries(clauses []searchWireTextClause) ([]query.Query, error) {
@@ -4111,11 +4122,11 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 			q.SetPrefix(int(clause.Prefix))
 		}
 		q.SetOperator(query.MatchQueryOperator(clause.Operator))
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextTerm:
 		q := query.NewTermQuery(clause.Text)
 		q.SetField(clause.Field)
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextMatchPhrase:
 		q := query.NewMatchPhraseQuery(clause.Text)
 		q.SetField(clause.Field)
@@ -4125,7 +4136,7 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 		} else if clause.Fuzziness != 0 {
 			q.SetFuzziness(int(clause.Fuzziness))
 		}
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextPhrase:
 		if len(clause.Terms) == 0 {
 			return nil, errSearchWireInvalid
@@ -4136,7 +4147,7 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 		} else if clause.Fuzziness != 0 {
 			q.SetFuzziness(int(clause.Fuzziness))
 		}
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextMultiPhrase:
 		if len(clause.TermSets) == 0 {
 			return nil, errSearchWireInvalid
@@ -4147,7 +4158,7 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 		} else if clause.Fuzziness != 0 {
 			q.SetFuzziness(int(clause.Fuzziness))
 		}
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextBool:
 		boolReq := searchWireTextBoolRequest{
 			Must:      clause.Must,
@@ -4155,10 +4166,11 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 			MustNot:   clause.MustNot,
 			Filter:    clause.Filter,
 			MinShould: clause.MinShould,
+			Boost:     clause.Boost,
 		}
 		return buildSearchWireBoolQuery(boolReq)
 	case searchWireOpTextQueryString:
-		return query.NewQueryStringQuery(clause.Text), nil
+		return applySearchWireBoost(query.NewQueryStringQuery(clause.Text), clause.Boost), nil
 	case searchWireOpTextNumericRange:
 		var min *float64
 		var max *float64
@@ -4170,22 +4182,22 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 		}
 		q := query.NewNumericRangeInclusiveQuery(min, max, boolPtr(clause.InclMin), boolPtr(clause.InclMax))
 		q.SetField(clause.Field)
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextDateRange:
 		q := query.NewDateRangeStringInclusiveQuery(clause.Text, clause.AltText, boolPtr(clause.InclMin), boolPtr(clause.InclMax))
 		q.SetField(clause.Field)
 		if clause.Parser != "" {
 			q.SetDateTimeParser(clause.Parser)
 		}
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextGeoDistance:
 		q := query.NewGeoDistanceQuery(clause.Lon, clause.Lat, clause.Distance)
 		q.SetField(clause.Field)
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextGeoBBox:
 		q := query.NewGeoBoundingBoxQuery(clause.TopLeftLon, clause.TopLeftLat, clause.BottomRightLon, clause.BottomRightLat)
 		q.SetField(clause.Field)
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextGeoPolygon:
 		if len(clause.Points) == 0 {
 			return nil, errSearchWireInvalid
@@ -4194,7 +4206,7 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 		copy(points, clause.Points)
 		q := query.NewGeoBoundingPolygonQuery(points)
 		q.SetField(clause.Field)
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextGeoShape:
 		if len(clause.ShapePolygons) == 0 {
 			return nil, errSearchWireInvalid
@@ -4220,11 +4232,11 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 			return nil, err
 		}
 		q.SetField(clause.Field)
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextTermRange:
 		q := query.NewTermRangeInclusiveQuery(clause.Text, clause.AltText, boolPtr(clause.InclMin), boolPtr(clause.InclMax))
 		q.SetField(clause.Field)
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextDocID:
 		if len(clause.Terms) == 0 {
 			return nil, errSearchWireInvalid
@@ -4233,23 +4245,23 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 	case searchWireOpTextBoolField:
 		q := query.NewBoolFieldQuery(clause.BoolValue)
 		q.SetField(clause.Field)
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextIPRange:
 		q := query.NewIPRangeQuery(clause.Text)
 		q.SetField(clause.Field)
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextPrefix:
 		q := query.NewPrefixQuery(clause.Text)
 		q.SetField(clause.Field)
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextWildcard:
 		q := query.NewWildcardQuery(clause.Text)
 		q.SetField(clause.Field)
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextRegexp:
 		q := query.NewRegexpQuery(clause.Text)
 		q.SetField(clause.Field)
-		return q, nil
+		return applySearchWireBoost(q, clause.Boost), nil
 	case searchWireOpTextFuzzy:
 		q := query.NewFuzzyQuery(clause.Text)
 		q.SetField(clause.Field)

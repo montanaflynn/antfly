@@ -1127,7 +1127,7 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 		return nil, 0, false
 	case *query.ConjunctionQuery:
 		if clauses, ok := encodeSimpleTextClauses(typed.Conjuncts); ok {
-			return encodeSearchWireTextBool("full_text_index", clauses, nil, nil, nil, 0, uint32(req.Size), uint32(req.From)), searchWireOpTextBool, true
+			return encodeSearchWireTextBool("full_text_index", clauses, nil, nil, nil, 0, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextBool, true
 		}
 		return nil, 0, false
 	case *query.DisjunctionQuery:
@@ -1135,7 +1135,7 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 			return nil, 0, false
 		}
 		if clauses, ok := encodeSimpleTextClauses(typed.Disjuncts); ok {
-			return encodeSearchWireTextBool("full_text_index", nil, clauses, nil, nil, uint16(typed.Min), uint32(req.Size), uint32(req.From)), searchWireOpTextBool, true
+			return encodeSearchWireTextBool("full_text_index", nil, clauses, nil, nil, uint16(typed.Min), searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextBool, true
 		}
 		return nil, 0, false
 	default:
@@ -1320,8 +1320,12 @@ func normalizeSearchWireGeoShapePolygon(coords [][]float64) ([]blevegeo.Point, b
 	return points, true
 }
 
-func encodeSearchWireTextBool(indexName string, must, should, mustNot, filter []searchwire.TextClause, minShould uint16, limit, offset uint32) []byte {
-	return searchwire.EncodeTextBoolRequest(indexName, must, should, mustNot, filter, minShould, limit, offset)
+func searchWireBoost(boost float64) float32 {
+	return float32(boost)
+}
+
+func encodeSearchWireTextBool(indexName string, must, should, mustNot, filter []searchwire.TextClause, minShould uint16, boost float32, limit, offset uint32) []byte {
+	return searchwire.EncodeTextBoolRequest(indexName, must, should, mustNot, filter, minShould, boost, limit, offset)
 }
 
 func encodeBoolTextSearchWire(indexName string, q *query.BooleanQuery, limit, offset uint32) ([]byte, bool) {
@@ -1347,7 +1351,7 @@ func encodeBoolTextSearchWire(indexName string, q *query.BooleanQuery, limit, of
 	if len(must) == 0 && len(should) == 0 && len(mustNot) == 0 && len(filter) == 0 {
 		return nil, false
 	}
-	return encodeSearchWireTextBool(indexName, must, should, mustNot, filter, minShould, limit, offset), true
+	return encodeSearchWireTextBool(indexName, must, should, mustNot, filter, minShould, searchWireBoost(q.Boost()), limit, offset), true
 }
 
 func encodeBooleanMustClauses(q query.Query) ([]searchwire.TextClause, bool) {
@@ -1423,13 +1427,14 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			MustNot:   mustNot,
 			Filter:    filter,
 			MinShould: minShould,
+			Boost:     searchWireBoost(typed.Boost()),
 		}, true
 	case *query.ConjunctionQuery:
 		clauses, ok := encodeSimpleTextClauses(typed.Conjuncts)
 		if !ok || len(clauses) == 0 {
 			return searchwire.TextClause{}, false
 		}
-		return searchwire.TextClause{Op: searchWireOpTextBool, Must: clauses}, true
+		return searchwire.TextClause{Op: searchWireOpTextBool, Must: clauses, Boost: searchWireBoost(typed.Boost())}, true
 	case *query.DisjunctionQuery:
 		if typed.Min < 0 || typed.Min > math.MaxUint16 || typed.Min != math.Trunc(typed.Min) {
 			return searchwire.TextClause{}, false
@@ -1438,7 +1443,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 		if !ok || len(clauses) == 0 {
 			return searchwire.TextClause{}, false
 		}
-		return searchwire.TextClause{Op: searchWireOpTextBool, Should: clauses, MinShould: uint16(typed.Min)}, true
+		return searchwire.TextClause{Op: searchWireOpTextBool, Should: clauses, MinShould: uint16(typed.Min), Boost: searchWireBoost(typed.Boost())}, true
 	case *query.MatchQuery:
 		if typed.Field() == "" || typed.Match == "" {
 			return searchwire.TextClause{}, false
@@ -1456,12 +1461,13 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Fuzziness: fuzziness,
 			Auto:      auto,
 			Operator:  uint8(typed.Operator),
+			Boost:     searchWireBoost(typed.Boost()),
 		}, true
 	case *query.TermQuery:
 		if typed.Field() == "" || typed.Term == "" {
 			return searchwire.TextClause{}, false
 		}
-		return searchwire.TextClause{Op: searchWireOpTextTerm, Field: typed.Field(), Text: typed.Term}, true
+		return searchwire.TextClause{Op: searchWireOpTextTerm, Field: typed.Field(), Text: typed.Term, Boost: searchWireBoost(typed.Boost())}, true
 	case *query.MatchPhraseQuery:
 		if typed.Field() == "" || typed.MatchPhrase == "" {
 			return searchwire.TextClause{}, false
@@ -1477,6 +1483,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Analyzer:  typed.Analyzer,
 			Fuzziness: fuzziness,
 			Auto:      auto,
+			Boost:     searchWireBoost(typed.Boost()),
 		}, true
 	case *query.PhraseQuery:
 		if typed.Field() == "" || len(typed.Terms) == 0 {
@@ -1492,6 +1499,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Fuzziness: fuzziness,
 			Auto:      auto,
 			Terms:     append([]string(nil), typed.Terms...),
+			Boost:     searchWireBoost(typed.Boost()),
 		}, true
 	case *query.MultiPhraseQuery:
 		if typed.Field() == "" || len(typed.Terms) == 0 {
@@ -1511,27 +1519,28 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Fuzziness: fuzziness,
 			Auto:      auto,
 			TermSets:  termSets,
+			Boost:     searchWireBoost(typed.Boost()),
 		}, true
 	case *query.QueryStringQuery:
 		if typed.Query == "" {
 			return searchwire.TextClause{}, false
 		}
-		return searchwire.TextClause{Op: searchWireOpTextQueryString, Text: typed.Query}, true
+		return searchwire.TextClause{Op: searchWireOpTextQueryString, Text: typed.Query, Boost: searchWireBoost(typed.Boost())}, true
 	case *query.PrefixQuery:
 		if typed.Field() == "" || typed.Prefix == "" {
 			return searchwire.TextClause{}, false
 		}
-		return searchwire.TextClause{Op: searchWireOpTextPrefix, Field: typed.Field(), Text: typed.Prefix}, true
+		return searchwire.TextClause{Op: searchWireOpTextPrefix, Field: typed.Field(), Text: typed.Prefix, Boost: searchWireBoost(typed.Boost())}, true
 	case *query.WildcardQuery:
 		if typed.Field() == "" || typed.Wildcard == "" {
 			return searchwire.TextClause{}, false
 		}
-		return searchwire.TextClause{Op: searchWireOpTextWildcard, Field: typed.Field(), Text: typed.Wildcard}, true
+		return searchwire.TextClause{Op: searchWireOpTextWildcard, Field: typed.Field(), Text: typed.Wildcard, Boost: searchWireBoost(typed.Boost())}, true
 	case *query.RegexpQuery:
 		if typed.Field() == "" || typed.Regexp == "" {
 			return searchwire.TextClause{}, false
 		}
-		return searchwire.TextClause{Op: searchWireOpTextRegexp, Field: typed.Field(), Text: typed.Regexp}, true
+		return searchwire.TextClause{Op: searchWireOpTextRegexp, Field: typed.Field(), Text: typed.Regexp, Boost: searchWireBoost(typed.Boost())}, true
 	case *query.FuzzyQuery:
 		if typed.Field() == "" || typed.Term == "" {
 			return searchwire.TextClause{}, false
@@ -1542,6 +1551,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Text:      typed.Term,
 			Prefix:    uint16(typed.Prefix),
 			Fuzziness: uint16(typed.Fuzziness),
+			Boost:     searchWireBoost(typed.Boost()),
 		}, true
 	case *query.TermRangeQuery:
 		if typed.Field() == "" {
@@ -1554,6 +1564,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			AltText: typed.Max,
 			InclMin: typed.InclusiveMin != nil && *typed.InclusiveMin,
 			InclMax: typed.InclusiveMax != nil && *typed.InclusiveMax,
+			Boost:   searchWireBoost(typed.Boost()),
 		}, true
 	case *query.NumericRangeQuery:
 		if typed.Field() == "" {
@@ -1564,6 +1575,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Field:   typed.Field(),
 			InclMin: typed.InclusiveMin != nil && *typed.InclusiveMin,
 			InclMax: typed.InclusiveMax != nil && *typed.InclusiveMax,
+			Boost:   searchWireBoost(typed.Boost()),
 		}
 		if typed.Min != nil {
 			clause.NumMin = *typed.Min
@@ -1583,6 +1595,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Field:   typed.Field(),
 			InclMin: typed.InclusiveStart != nil && *typed.InclusiveStart,
 			InclMax: typed.InclusiveEnd != nil && *typed.InclusiveEnd,
+			Boost:   searchWireBoost(typed.Boost()),
 		}
 		if !typed.Start.IsZero() {
 			clause.Text = typed.Start.Time.Format(time.RFC3339Nano)
@@ -1603,6 +1616,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Parser:  typed.DateTimeParserName(),
 			InclMin: typed.InclusiveStart != nil && *typed.InclusiveStart,
 			InclMax: typed.InclusiveEnd != nil && *typed.InclusiveEnd,
+			Boost:   searchWireBoost(typed.Boost()),
 		}, true
 	case *query.GeoDistanceQuery:
 		if typed.Field() == "" || typed.Distance == "" || len(typed.Location) != 2 {
@@ -1614,6 +1628,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Lon:      typed.Location[0],
 			Lat:      typed.Location[1],
 			Distance: typed.Distance,
+			Boost:    searchWireBoost(typed.Boost()),
 		}, true
 	case *query.GeoBoundingBoxQuery:
 		if typed.Field() == "" || len(typed.TopLeft) != 2 || len(typed.BottomRight) != 2 {
@@ -1626,6 +1641,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			TopLeftLat:     typed.TopLeft[1],
 			BottomRightLon: typed.BottomRight[0],
 			BottomRightLat: typed.BottomRight[1],
+			Boost:          searchWireBoost(typed.Boost()),
 		}, true
 	case *query.GeoBoundingPolygonQuery:
 		if typed.Field() == "" || len(typed.Points) == 0 {
@@ -1637,6 +1653,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Op:     searchWireOpTextGeoPolygon,
 			Field:  typed.Field(),
 			Points: points,
+			Boost:  searchWireBoost(typed.Boost()),
 		}, true
 	case *query.GeoShapeQuery:
 		if typed.Field() == "" || typed.Geometry.Shape == nil {
@@ -1677,6 +1694,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 				Field:         typed.Field(),
 				Relation:      relation,
 				ShapePolygons: [][]blevegeo.Point{polygon},
+				Boost:         searchWireBoost(typed.Boost()),
 			}, true
 		case "multipolygon":
 			var coordinates [][][][]float64
@@ -1699,6 +1717,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 				Field:         typed.Field(),
 				Relation:      relation,
 				ShapePolygons: polygons,
+				Boost:         searchWireBoost(typed.Boost()),
 			}, true
 		default:
 			return searchwire.TextClause{}, false
@@ -1710,6 +1729,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 		return searchwire.TextClause{
 			Op:    searchWireOpTextDocID,
 			Terms: append([]string(nil), typed.IDs...),
+			Boost: searchWireBoost(typed.Boost()),
 		}, true
 	case *query.BoolFieldQuery:
 		if typed.Field() == "" {
@@ -1719,6 +1739,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Op:        searchWireOpTextBoolField,
 			Field:     typed.Field(),
 			BoolValue: typed.Bool,
+			Boost:     searchWireBoost(typed.Boost()),
 		}, true
 	case *query.IPRangeQuery:
 		if typed.Field() == "" || typed.CIDR == "" {
@@ -1728,6 +1749,7 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Op:    searchWireOpTextIPRange,
 			Field: typed.Field(),
 			Text:  typed.CIDR,
+			Boost: searchWireBoost(typed.Boost()),
 		}, true
 	default:
 		return searchwire.TextClause{}, false
