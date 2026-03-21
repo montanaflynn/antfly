@@ -1022,6 +1022,60 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 			return nil, err
 		}
 		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextNumericRange:
+		req, err := decodeSearchWireTextNumericRangeRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		q := blevequery.NewNumericRangeInclusiveQuery(req.Min, req.Max, req.InclusiveMin, req.InclusiveMax)
+		q.SetField(req.Field)
+		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextGeoDistance:
+		req, err := decodeSearchWireTextGeoDistanceRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		q := bleve.NewGeoDistanceQuery(req.Lon, req.Lat, req.Distance)
+		q.SetField(req.Field)
+		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextGeoBBox:
+		req, err := decodeSearchWireTextGeoBoundingBoxRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		q := bleve.NewGeoBoundingBoxQuery(req.TopLeftLon, req.TopLeftLat, req.BottomRightLon, req.BottomRightLat)
+		q.SetField(req.Field)
+		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextGeoPolygon:
+		req, err := decodeSearchWireTextGeoBoundingPolygonRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		points := make([]blevegeo.Point, len(req.Points))
+		copy(points, req.Points)
+		q := blevequery.NewGeoBoundingPolygonQuery(points)
+		q.SetField(req.Field)
+		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
 	default:
 		return nil, zigUnsupported("Search wire op not implemented")
 	}

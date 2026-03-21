@@ -7,6 +7,7 @@ import (
 
 	"github.com/antflydb/antfly/lib/vectorindex"
 	"github.com/blevesearch/bleve/v2"
+	blevegeo "github.com/blevesearch/bleve/v2/geo"
 )
 
 const (
@@ -15,19 +16,23 @@ const (
 	Magic   uint32 = 0x41464442 // AFDB
 	Version uint16 = 1
 
-	OpDenseKnn        uint16 = 1
-	OpTextMatch       uint16 = 2
-	OpTextTerm        uint16 = 3
-	OpTextMatchPhrase uint16 = 4
-	OpTextQueryString uint16 = 5
-	OpTextBool        uint16 = 6
-	OpTextPrefix      uint16 = 7
-	OpTextWildcard    uint16 = 8
-	OpTextRegexp      uint16 = 9
-	OpTextFuzzy       uint16 = 10
-	OpTextMatchAll    uint16 = 11
-	OpTextMatchNone   uint16 = 12
-	OpTextDateRange   uint16 = 13
+	OpDenseKnn         uint16 = 1
+	OpTextMatch        uint16 = 2
+	OpTextTerm         uint16 = 3
+	OpTextMatchPhrase  uint16 = 4
+	OpTextQueryString  uint16 = 5
+	OpTextBool         uint16 = 6
+	OpTextPrefix       uint16 = 7
+	OpTextWildcard     uint16 = 8
+	OpTextRegexp       uint16 = 9
+	OpTextFuzzy        uint16 = 10
+	OpTextMatchAll     uint16 = 11
+	OpTextMatchNone    uint16 = 12
+	OpTextDateRange    uint16 = 13
+	OpTextNumericRange uint16 = 14
+	OpTextGeoDistance  uint16 = 15
+	OpTextGeoBBox      uint16 = 16
+	OpTextGeoPolygon   uint16 = 17
 )
 
 var ErrInvalid = errors.New("invalid search wire payload")
@@ -87,6 +92,46 @@ type TextDateRangeRequest struct {
 	DateTimeParser string
 	Limit          uint32
 	Offset         uint32
+}
+
+type TextNumericRangeRequest struct {
+	IndexName    string
+	Field        string
+	Min          *float64
+	Max          *float64
+	InclusiveMin *bool
+	InclusiveMax *bool
+	Limit        uint32
+	Offset       uint32
+}
+
+type TextGeoDistanceRequest struct {
+	IndexName string
+	Field     string
+	Lon       float64
+	Lat       float64
+	Distance  string
+	Limit     uint32
+	Offset    uint32
+}
+
+type TextGeoBoundingBoxRequest struct {
+	IndexName      string
+	Field          string
+	TopLeftLon     float64
+	TopLeftLat     float64
+	BottomRightLon float64
+	BottomRightLat float64
+	Limit          uint32
+	Offset         uint32
+}
+
+type TextGeoBoundingPolygonRequest struct {
+	IndexName string
+	Field     string
+	Points    []blevegeo.Point
+	Limit     uint32
+	Offset    uint32
 }
 
 type Hit struct {
@@ -294,6 +339,158 @@ func EncodeTextDateRangeRequest(indexName, field, start, end string, inclusiveSt
 	copy(out[cursor:], end)
 	cursor += len(end)
 	copy(out[cursor:], parser)
+	return out
+}
+
+func EncodeTextNumericRangeRequest(indexName, field string, min, max *float64, inclusiveMin, inclusiveMax *bool, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 8 + 8 + 2 + 2
+	out := make([]byte, headerLen+len(indexName)+len(field))
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], Magic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], Version)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], OpTextNumericRange)
+	cursor += 2
+	var flags uint32
+	if min != nil {
+		flags |= 1 << 0
+		binary.LittleEndian.PutUint64(out[20:28], math.Float64bits(*min))
+	}
+	if max != nil {
+		flags |= 1 << 1
+		binary.LittleEndian.PutUint64(out[28:36], math.Float64bits(*max))
+	}
+	if inclusiveMin != nil {
+		flags |= 1 << 2
+		if *inclusiveMin {
+			flags |= 1 << 3
+		}
+	}
+	if inclusiveMax != nil {
+		flags |= 1 << 4
+		if *inclusiveMax {
+			flags |= 1 << 5
+		}
+	}
+	binary.LittleEndian.PutUint32(out[cursor:], flags)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	cursor += 8 // min
+	cursor += 8 // max
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
+	cursor += 2
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	copy(out[cursor:], field)
+	return out
+}
+
+func EncodeTextGeoDistanceRequest(indexName, field string, lon, lat float64, distance string, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 8 + 8 + 2 + 2 + 4
+	out := make([]byte, headerLen+len(indexName)+len(field)+len(distance))
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], Magic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], Version)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], OpTextGeoDistance)
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], 0)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint64(out[cursor:], math.Float64bits(lon))
+	cursor += 8
+	binary.LittleEndian.PutUint64(out[cursor:], math.Float64bits(lat))
+	cursor += 8
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], uint32(len(distance)))
+	cursor += 4
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	copy(out[cursor:], field)
+	cursor += len(field)
+	copy(out[cursor:], distance)
+	return out
+}
+
+func EncodeTextGeoBoundingBoxRequest(indexName, field string, topLeftLon, topLeftLat, bottomRightLon, bottomRightLat float64, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 8 + 8 + 8 + 8 + 2 + 2
+	out := make([]byte, headerLen+len(indexName)+len(field))
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], Magic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], Version)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], OpTextGeoBBox)
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], 0)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint64(out[cursor:], math.Float64bits(topLeftLon))
+	cursor += 8
+	binary.LittleEndian.PutUint64(out[cursor:], math.Float64bits(topLeftLat))
+	cursor += 8
+	binary.LittleEndian.PutUint64(out[cursor:], math.Float64bits(bottomRightLon))
+	cursor += 8
+	binary.LittleEndian.PutUint64(out[cursor:], math.Float64bits(bottomRightLat))
+	cursor += 8
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
+	cursor += 2
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	copy(out[cursor:], field)
+	return out
+}
+
+func EncodeTextGeoBoundingPolygonRequest(indexName, field string, points []blevegeo.Point, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2
+	out := make([]byte, headerLen+len(indexName)+len(field)+len(points)*16)
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], Magic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], Version)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], OpTextGeoPolygon)
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], 0)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(points)))
+	cursor += 2
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	copy(out[cursor:], field)
+	cursor += len(field)
+	for _, point := range points {
+		binary.LittleEndian.PutUint64(out[cursor:], math.Float64bits(point.Lon))
+		cursor += 8
+		binary.LittleEndian.PutUint64(out[cursor:], math.Float64bits(point.Lat))
+		cursor += 8
+	}
 	return out
 }
 
@@ -524,6 +721,166 @@ func DecodeTextDateRangeRequest(raw []byte) (TextDateRangeRequest, error) {
 		DateTimeParser: parser,
 		Limit:          limit,
 		Offset:         offset,
+	}, nil
+}
+
+func DecodeTextNumericRangeRequest(raw []byte) (TextNumericRangeRequest, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 8 + 8 + 2 + 2
+	if len(raw) < headerLen {
+		return TextNumericRangeRequest{}, ErrInvalid
+	}
+	if op, ok := Op(raw); !ok || op != OpTextNumericRange {
+		return TextNumericRangeRequest{}, ErrInvalid
+	}
+	flags := binary.LittleEndian.Uint32(raw[8:12])
+	limit := binary.LittleEndian.Uint32(raw[12:16])
+	offset := binary.LittleEndian.Uint32(raw[16:20])
+	var min *float64
+	var max *float64
+	if flags&(1<<0) != 0 {
+		value := math.Float64frombits(binary.LittleEndian.Uint64(raw[20:28]))
+		min = &value
+	}
+	if flags&(1<<1) != 0 {
+		value := math.Float64frombits(binary.LittleEndian.Uint64(raw[28:36]))
+		max = &value
+	}
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[36:38]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[38:40]))
+	if len(raw) < headerLen+indexNameLen+fieldLen {
+		return TextNumericRangeRequest{}, ErrInvalid
+	}
+	cursor := headerLen
+	indexName := string(raw[cursor : cursor+indexNameLen])
+	cursor += indexNameLen
+	field := string(raw[cursor : cursor+fieldLen])
+	var inclusiveMin *bool
+	var inclusiveMax *bool
+	if flags&(1<<2) != 0 {
+		value := flags&(1<<3) != 0
+		inclusiveMin = &value
+	}
+	if flags&(1<<4) != 0 {
+		value := flags&(1<<5) != 0
+		inclusiveMax = &value
+	}
+	return TextNumericRangeRequest{
+		IndexName:    indexName,
+		Field:        field,
+		Min:          min,
+		Max:          max,
+		InclusiveMin: inclusiveMin,
+		InclusiveMax: inclusiveMax,
+		Limit:        limit,
+		Offset:       offset,
+	}, nil
+}
+
+func DecodeTextGeoDistanceRequest(raw []byte) (TextGeoDistanceRequest, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 8 + 8 + 2 + 2 + 4
+	if len(raw) < headerLen {
+		return TextGeoDistanceRequest{}, ErrInvalid
+	}
+	if op, ok := Op(raw); !ok || op != OpTextGeoDistance {
+		return TextGeoDistanceRequest{}, ErrInvalid
+	}
+	limit := binary.LittleEndian.Uint32(raw[12:16])
+	offset := binary.LittleEndian.Uint32(raw[16:20])
+	lon := math.Float64frombits(binary.LittleEndian.Uint64(raw[20:28]))
+	lat := math.Float64frombits(binary.LittleEndian.Uint64(raw[28:36]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[36:38]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[38:40]))
+	distanceLen := int(binary.LittleEndian.Uint32(raw[40:44]))
+	if len(raw) < headerLen+indexNameLen+fieldLen+distanceLen {
+		return TextGeoDistanceRequest{}, ErrInvalid
+	}
+	cursor := headerLen
+	indexName := string(raw[cursor : cursor+indexNameLen])
+	cursor += indexNameLen
+	field := string(raw[cursor : cursor+fieldLen])
+	cursor += fieldLen
+	distance := string(raw[cursor : cursor+distanceLen])
+	return TextGeoDistanceRequest{
+		IndexName: indexName,
+		Field:     field,
+		Lon:       lon,
+		Lat:       lat,
+		Distance:  distance,
+		Limit:     limit,
+		Offset:    offset,
+	}, nil
+}
+
+func DecodeTextGeoBoundingBoxRequest(raw []byte) (TextGeoBoundingBoxRequest, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 8 + 8 + 8 + 8 + 2 + 2
+	if len(raw) < headerLen {
+		return TextGeoBoundingBoxRequest{}, ErrInvalid
+	}
+	if op, ok := Op(raw); !ok || op != OpTextGeoBBox {
+		return TextGeoBoundingBoxRequest{}, ErrInvalid
+	}
+	limit := binary.LittleEndian.Uint32(raw[12:16])
+	offset := binary.LittleEndian.Uint32(raw[16:20])
+	topLeftLon := math.Float64frombits(binary.LittleEndian.Uint64(raw[20:28]))
+	topLeftLat := math.Float64frombits(binary.LittleEndian.Uint64(raw[28:36]))
+	bottomRightLon := math.Float64frombits(binary.LittleEndian.Uint64(raw[36:44]))
+	bottomRightLat := math.Float64frombits(binary.LittleEndian.Uint64(raw[44:52]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[52:54]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[54:56]))
+	if len(raw) < headerLen+indexNameLen+fieldLen {
+		return TextGeoBoundingBoxRequest{}, ErrInvalid
+	}
+	cursor := headerLen
+	indexName := string(raw[cursor : cursor+indexNameLen])
+	cursor += indexNameLen
+	field := string(raw[cursor : cursor+fieldLen])
+	return TextGeoBoundingBoxRequest{
+		IndexName:      indexName,
+		Field:          field,
+		TopLeftLon:     topLeftLon,
+		TopLeftLat:     topLeftLat,
+		BottomRightLon: bottomRightLon,
+		BottomRightLat: bottomRightLat,
+		Limit:          limit,
+		Offset:         offset,
+	}, nil
+}
+
+func DecodeTextGeoBoundingPolygonRequest(raw []byte) (TextGeoBoundingPolygonRequest, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2
+	if len(raw) < headerLen {
+		return TextGeoBoundingPolygonRequest{}, ErrInvalid
+	}
+	if op, ok := Op(raw); !ok || op != OpTextGeoPolygon {
+		return TextGeoBoundingPolygonRequest{}, ErrInvalid
+	}
+	limit := binary.LittleEndian.Uint32(raw[12:16])
+	offset := binary.LittleEndian.Uint32(raw[16:20])
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
+	pointCount := int(binary.LittleEndian.Uint16(raw[24:26]))
+	if len(raw) < headerLen+indexNameLen+fieldLen+pointCount*16 {
+		return TextGeoBoundingPolygonRequest{}, ErrInvalid
+	}
+	cursor := headerLen
+	indexName := string(raw[cursor : cursor+indexNameLen])
+	cursor += indexNameLen
+	field := string(raw[cursor : cursor+fieldLen])
+	cursor += fieldLen
+	points := make([]blevegeo.Point, pointCount)
+	for i := range points {
+		points[i] = blevegeo.Point{
+			Lon: math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor : cursor+8])),
+			Lat: math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor+8 : cursor+16])),
+		}
+		cursor += 16
+	}
+	return TextGeoBoundingPolygonRequest{
+		IndexName: indexName,
+		Field:     field,
+		Points:    points,
+		Limit:     limit,
+		Offset:    offset,
 	}, nil
 }
 

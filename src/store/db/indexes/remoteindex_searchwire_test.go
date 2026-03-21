@@ -13,6 +13,7 @@ import (
 	"github.com/antflydb/antfly/lib/types"
 	"github.com/antflydb/antfly/lib/vector"
 	"github.com/blevesearch/bleve/v2"
+	blevegeo "github.com/blevesearch/bleve/v2/geo"
 	"github.com/blevesearch/bleve/v2/search"
 	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/stretchr/testify/require"
@@ -313,6 +314,145 @@ func TestRemoteIndexSearchInContext_UsesWireForDateRangeString(t *testing.T) {
 			StatusCode: http.StatusOK,
 			Header:     header,
 			Body:       io.NopCloser(bytes.NewReader(makeRemoteIndexWireResponse(searchWireOpTextDateRange, 1, []remoteIndexWireHit{{id: "doc-1", score: 1.0}}))),
+		}, nil
+	})}
+
+	idx, err := NewRemoteIndex(client, []string{"http://wire-search"}, types.ID(1))
+	require.NoError(t, err)
+
+	res, err := idx.SearchInContext(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, uint64(1), res.Total)
+	require.Len(t, res.Hits, 1)
+	require.Equal(t, "doc-1", res.Hits[0].ID)
+}
+
+func TestRemoteIndexSearchInContext_UsesWireForNumericRange(t *testing.T) {
+	min := 10.0
+	max := 20.0
+	q := query.NewNumericRangeQuery(&min, &max)
+	q.SetField("price")
+	req := bleve.NewSearchRequestOptions(q, 10, 0, false)
+
+	client := &http.Client{Transport: remoteIndexRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Helper()
+		require.Equal(t, searchWireContentType, r.Header.Get("Content-Type"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Equal(t, searchWireMagic, binary.LittleEndian.Uint32(body[0:4]))
+		require.Equal(t, searchWireOpTextNumericRange, binary.LittleEndian.Uint16(body[6:8]))
+
+		header := make(http.Header)
+		header.Set("Content-Type", searchWireContentType)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(bytes.NewReader(makeRemoteIndexWireResponse(searchWireOpTextNumericRange, 1, []remoteIndexWireHit{{id: "doc-1", score: 1.0}}))),
+		}, nil
+	})}
+
+	idx, err := NewRemoteIndex(client, []string{"http://wire-search"}, types.ID(1))
+	require.NoError(t, err)
+
+	res, err := idx.SearchInContext(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, uint64(1), res.Total)
+	require.Len(t, res.Hits, 1)
+	require.Equal(t, "doc-1", res.Hits[0].ID)
+}
+
+func TestRemoteIndexSearchInContext_UsesWireForGeoDistance(t *testing.T) {
+	q := bleve.NewGeoDistanceQuery(-122.4194, 37.7749, "2km")
+	q.SetField("location")
+	req := bleve.NewSearchRequestOptions(q, 10, 0, false)
+
+	client := &http.Client{Transport: remoteIndexRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Helper()
+		require.Equal(t, searchWireContentType, r.Header.Get("Content-Type"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Equal(t, searchWireMagic, binary.LittleEndian.Uint32(body[0:4]))
+		require.Equal(t, searchWireOpTextGeoDistance, binary.LittleEndian.Uint16(body[6:8]))
+
+		header := make(http.Header)
+		header.Set("Content-Type", searchWireContentType)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(bytes.NewReader(makeRemoteIndexWireResponse(searchWireOpTextGeoDistance, 1, []remoteIndexWireHit{{id: "doc-1", score: 1.0}}))),
+		}, nil
+	})}
+
+	idx, err := NewRemoteIndex(client, []string{"http://wire-search"}, types.ID(1))
+	require.NoError(t, err)
+
+	res, err := idx.SearchInContext(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, uint64(1), res.Total)
+	require.Len(t, res.Hits, 1)
+	require.Equal(t, "doc-1", res.Hits[0].ID)
+}
+
+func TestRemoteIndexSearchInContext_UsesWireForGeoBoundingBox(t *testing.T) {
+	q := bleve.NewGeoBoundingBoxQuery(-122.6, 37.9, -122.2, 37.7)
+	q.SetField("location")
+	req := bleve.NewSearchRequestOptions(q, 10, 0, false)
+
+	client := &http.Client{Transport: remoteIndexRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Helper()
+		require.Equal(t, searchWireContentType, r.Header.Get("Content-Type"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Equal(t, searchWireMagic, binary.LittleEndian.Uint32(body[0:4]))
+		require.Equal(t, searchWireOpTextGeoBBox, binary.LittleEndian.Uint16(body[6:8]))
+
+		header := make(http.Header)
+		header.Set("Content-Type", searchWireContentType)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(bytes.NewReader(makeRemoteIndexWireResponse(searchWireOpTextGeoBBox, 1, []remoteIndexWireHit{{id: "doc-1", score: 1.0}}))),
+		}, nil
+	})}
+
+	idx, err := NewRemoteIndex(client, []string{"http://wire-search"}, types.ID(1))
+	require.NoError(t, err)
+
+	res, err := idx.SearchInContext(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, uint64(1), res.Total)
+	require.Len(t, res.Hits, 1)
+	require.Equal(t, "doc-1", res.Hits[0].ID)
+}
+
+func TestRemoteIndexSearchInContext_UsesWireForGeoBoundingPolygon(t *testing.T) {
+	q := query.NewGeoBoundingPolygonQuery([]blevegeo.Point{
+		{Lon: 0, Lat: 0},
+		{Lon: 10, Lat: 0},
+		{Lon: 10, Lat: 10},
+		{Lon: 0, Lat: 10},
+	})
+	q.SetField("location")
+	req := bleve.NewSearchRequestOptions(q, 10, 0, false)
+
+	client := &http.Client{Transport: remoteIndexRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Helper()
+		require.Equal(t, searchWireContentType, r.Header.Get("Content-Type"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Equal(t, searchWireMagic, binary.LittleEndian.Uint32(body[0:4]))
+		require.Equal(t, searchWireOpTextGeoPolygon, binary.LittleEndian.Uint16(body[6:8]))
+
+		header := make(http.Header)
+		header.Set("Content-Type", searchWireContentType)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(bytes.NewReader(makeRemoteIndexWireResponse(searchWireOpTextGeoPolygon, 1, []remoteIndexWireHit{{id: "doc-1", score: 1.0}}))),
 		}, nil
 	})}
 

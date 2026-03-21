@@ -9,6 +9,7 @@ import (
 	"github.com/antflydb/antfly/lib/types"
 	"github.com/antflydb/antfly/src/store/db/indexes"
 	"github.com/antflydb/antfly/src/store/searchwire"
+	blevegeo "github.com/blevesearch/bleve/v2/geo"
 	blevequery "github.com/blevesearch/bleve/v2/search/query"
 	"github.com/goccy/go-json"
 	"github.com/stretchr/testify/require"
@@ -159,4 +160,118 @@ func TestSearchWireDateRangeStringFastPath(t *testing.T) {
 	require.Equal(t, uint64(1), total)
 	require.Len(t, hits, 1)
 	require.Equal(t, "doc-1", hits[0].ID)
+}
+
+func TestSearchWireNumericRangeFastPath(t *testing.T) {
+	dir := t.TempDir()
+	db := &DBImpl{logger: zaptest.NewLogger(t)}
+	require.NoError(t, db.Open(dir, false, nil, types.Range{nil, []byte{0xFF}}))
+	defer db.Close()
+
+	tableSchema := &schema.TableSchema{
+		DefaultType: "default",
+		DocumentSchemas: map[string]schema.DocumentSchema{
+			"default": {
+				Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"price": map[string]any{"type": "number"},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, db.UpdateSchema(tableSchema))
+	require.NoError(t, db.AddIndex(*indexes.NewFullTextIndexConfig("full_text_index_v0", false)))
+
+	ctx := context.Background()
+	for key, doc := range map[string]map[string]any{
+		"doc-1": {"price": 10.0},
+		"doc-2": {"price": 20.0},
+		"doc-3": {"price": 30.0},
+	} {
+		payload, err := json.Marshal(doc)
+		require.NoError(t, err)
+		err = db.Batch(ctx, [][2][]byte{{[]byte(key), payload}}, nil, Op_SyncLevelFullText)
+		if err != nil && !errors.Is(err, ErrPartialSuccess) {
+			require.NoError(t, err)
+		}
+	}
+
+	min := 15.0
+	max := 30.0
+	reqBytes := encodeSearchWireTextNumericRangeRequest("full_text_index", "price", &min, &max, nil, nil, 10, 0)
+	resBytes, err := db.Search(ctx, reqBytes)
+	require.NoError(t, err)
+	total, hits, err := searchwire.DecodeHits(resBytes, searchWireOpTextNumericRange)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), total)
+	require.Len(t, hits, 1)
+	require.Equal(t, "doc-2", hits[0].ID)
+}
+
+func TestSearchWireGeoFastPaths(t *testing.T) {
+	dir := t.TempDir()
+	db := &DBImpl{logger: zaptest.NewLogger(t)}
+	require.NoError(t, db.Open(dir, false, nil, types.Range{nil, []byte{0xFF}}))
+	defer db.Close()
+
+	tableSchema := &schema.TableSchema{
+		DefaultType: "default",
+		DocumentSchemas: map[string]schema.DocumentSchema{
+			"default": {
+				Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"location": map[string]any{"type": "string", "x-antfly-types": []any{"geopoint"}},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, db.UpdateSchema(tableSchema))
+	require.NoError(t, db.AddIndex(*indexes.NewFullTextIndexConfig("full_text_index_v0", false)))
+
+	ctx := context.Background()
+	for key, doc := range map[string]map[string]any{
+		"doc-1": {"location": map[string]any{"lat": 37.7749, "lon": -122.4194}},
+		"doc-2": {"location": map[string]any{"lat": 37.7750, "lon": -122.4195}},
+		"doc-3": {"location": map[string]any{"lat": 40.7128, "lon": -74.0060}},
+	} {
+		payload, err := json.Marshal(doc)
+		require.NoError(t, err)
+		err = db.Batch(ctx, [][2][]byte{{[]byte(key), payload}}, nil, Op_SyncLevelFullText)
+		if err != nil && !errors.Is(err, ErrPartialSuccess) {
+			require.NoError(t, err)
+		}
+	}
+
+	distanceBytes := encodeSearchWireTextGeoDistanceRequest("full_text_index", "location", -122.4194, 37.7749, "2km", 10, 0)
+	distanceRes, err := db.Search(ctx, distanceBytes)
+	require.NoError(t, err)
+	distanceTotal, distanceHits, err := searchwire.DecodeHits(distanceRes, searchWireOpTextGeoDistance)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), distanceTotal)
+	require.Len(t, distanceHits, 2)
+
+	boxBytes := encodeSearchWireTextGeoBoundingBoxRequest("full_text_index", "location", -122.6, 37.9, -122.2, 37.7, 10, 0)
+	boxRes, err := db.Search(ctx, boxBytes)
+	require.NoError(t, err)
+	boxTotal, boxHits, err := searchwire.DecodeHits(boxRes, searchWireOpTextGeoBBox)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), boxTotal)
+	require.Len(t, boxHits, 2)
+
+	polygonBytes := encodeSearchWireTextGeoBoundingPolygonRequest("full_text_index", "location", []blevegeo.Point{
+		{Lon: -122.6, Lat: 37.9},
+		{Lon: -122.2, Lat: 37.9},
+		{Lon: -122.2, Lat: 37.7},
+		{Lon: -122.6, Lat: 37.7},
+	}, 10, 0)
+	polygonRes, err := db.Search(ctx, polygonBytes)
+	require.NoError(t, err)
+	polygonTotal, polygonHits, err := searchwire.DecodeHits(polygonRes, searchWireOpTextGeoPolygon)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), polygonTotal)
+	require.Len(t, polygonHits, 2)
 }

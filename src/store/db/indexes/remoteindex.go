@@ -45,22 +45,26 @@ import (
 )
 
 const (
-	searchWireContentType              = searchwire.ContentType
-	searchWireMagic             uint32 = searchwire.Magic
-	searchWireVersion           uint16 = searchwire.Version
-	searchWireOpDenseKnn        uint16 = searchwire.OpDenseKnn
-	searchWireOpTextMatch       uint16 = searchwire.OpTextMatch
-	searchWireOpTextTerm        uint16 = searchwire.OpTextTerm
-	searchWireOpTextMatchPhrase uint16 = searchwire.OpTextMatchPhrase
-	searchWireOpTextQueryString uint16 = searchwire.OpTextQueryString
-	searchWireOpTextBool        uint16 = searchwire.OpTextBool
-	searchWireOpTextPrefix      uint16 = searchwire.OpTextPrefix
-	searchWireOpTextWildcard    uint16 = searchwire.OpTextWildcard
-	searchWireOpTextRegexp      uint16 = searchwire.OpTextRegexp
-	searchWireOpTextFuzzy       uint16 = searchwire.OpTextFuzzy
-	searchWireOpTextMatchAll    uint16 = searchwire.OpTextMatchAll
-	searchWireOpTextMatchNone   uint16 = searchwire.OpTextMatchNone
-	searchWireOpTextDateRange   uint16 = searchwire.OpTextDateRange
+	searchWireContentType               = searchwire.ContentType
+	searchWireMagic              uint32 = searchwire.Magic
+	searchWireVersion            uint16 = searchwire.Version
+	searchWireOpDenseKnn         uint16 = searchwire.OpDenseKnn
+	searchWireOpTextMatch        uint16 = searchwire.OpTextMatch
+	searchWireOpTextTerm         uint16 = searchwire.OpTextTerm
+	searchWireOpTextMatchPhrase  uint16 = searchwire.OpTextMatchPhrase
+	searchWireOpTextQueryString  uint16 = searchwire.OpTextQueryString
+	searchWireOpTextBool         uint16 = searchwire.OpTextBool
+	searchWireOpTextPrefix       uint16 = searchwire.OpTextPrefix
+	searchWireOpTextWildcard     uint16 = searchwire.OpTextWildcard
+	searchWireOpTextRegexp       uint16 = searchwire.OpTextRegexp
+	searchWireOpTextFuzzy        uint16 = searchwire.OpTextFuzzy
+	searchWireOpTextMatchAll     uint16 = searchwire.OpTextMatchAll
+	searchWireOpTextMatchNone    uint16 = searchwire.OpTextMatchNone
+	searchWireOpTextDateRange    uint16 = searchwire.OpTextDateRange
+	searchWireOpTextNumericRange uint16 = searchwire.OpTextNumericRange
+	searchWireOpTextGeoDistance  uint16 = searchwire.OpTextGeoDistance
+	searchWireOpTextGeoBBox      uint16 = searchwire.OpTextGeoBBox
+	searchWireOpTextGeoPolygon   uint16 = searchwire.OpTextGeoPolygon
 )
 
 type FieldFilter struct {
@@ -1023,6 +1027,26 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 			return nil, 0, false
 		}
 		return searchwire.EncodeTextDateRangeRequest("full_text_index", typed.Field(), typed.Start, typed.End, typed.InclusiveStart, typed.InclusiveEnd, typed.DateTimeParserName(), uint32(req.Size), uint32(req.From)), searchWireOpTextDateRange, true
+	case *query.NumericRangeQuery:
+		if typed.Field() == "" {
+			return nil, 0, false
+		}
+		return searchwire.EncodeTextNumericRangeRequest("full_text_index", typed.Field(), typed.Min, typed.Max, typed.InclusiveMin, typed.InclusiveMax, uint32(req.Size), uint32(req.From)), searchWireOpTextNumericRange, true
+	case *query.GeoDistanceQuery:
+		if typed.Field() == "" || len(typed.Location) != 2 || typed.Distance == "" {
+			return nil, 0, false
+		}
+		return searchwire.EncodeTextGeoDistanceRequest("full_text_index", typed.Field(), typed.Location[0], typed.Location[1], typed.Distance, uint32(req.Size), uint32(req.From)), searchWireOpTextGeoDistance, true
+	case *query.GeoBoundingBoxQuery:
+		if typed.Field() == "" || len(typed.TopLeft) != 2 || len(typed.BottomRight) != 2 {
+			return nil, 0, false
+		}
+		return searchwire.EncodeTextGeoBoundingBoxRequest("full_text_index", typed.Field(), typed.TopLeft[0], typed.TopLeft[1], typed.BottomRight[0], typed.BottomRight[1], uint32(req.Size), uint32(req.From)), searchWireOpTextGeoBBox, true
+	case *query.GeoBoundingPolygonQuery:
+		if typed.Field() == "" || len(typed.Points) == 0 {
+			return nil, 0, false
+		}
+		return searchwire.EncodeTextGeoBoundingPolygonRequest("full_text_index", typed.Field(), typed.Points, uint32(req.Size), uint32(req.From)), searchWireOpTextGeoPolygon, true
 	case *query.BooleanQuery:
 		if body, ok := encodeBoolTextSearchWire("full_text_index", typed, uint32(req.Size), uint32(req.From)); ok {
 			return body, searchWireOpTextBool, true

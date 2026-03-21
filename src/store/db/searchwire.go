@@ -4,25 +4,30 @@ import (
 	"github.com/antflydb/antfly/lib/vectorindex"
 	"github.com/antflydb/antfly/src/store/searchwire"
 	"github.com/blevesearch/bleve/v2"
+	blevegeo "github.com/blevesearch/bleve/v2/geo"
 )
 
 const (
 	searchWireMagic   uint32 = searchwire.Magic
 	searchWireVersion uint16 = searchwire.Version
 
-	searchWireOpDenseKnn        uint16 = searchwire.OpDenseKnn
-	searchWireOpTextMatch       uint16 = searchwire.OpTextMatch
-	searchWireOpTextTerm        uint16 = searchwire.OpTextTerm
-	searchWireOpTextMatchPhrase uint16 = searchwire.OpTextMatchPhrase
-	searchWireOpTextQueryString uint16 = searchwire.OpTextQueryString
-	searchWireOpTextBool        uint16 = searchwire.OpTextBool
-	searchWireOpTextPrefix      uint16 = searchwire.OpTextPrefix
-	searchWireOpTextWildcard    uint16 = searchwire.OpTextWildcard
-	searchWireOpTextRegexp      uint16 = searchwire.OpTextRegexp
-	searchWireOpTextFuzzy       uint16 = searchwire.OpTextFuzzy
-	searchWireOpTextMatchAll    uint16 = searchwire.OpTextMatchAll
-	searchWireOpTextMatchNone   uint16 = searchwire.OpTextMatchNone
-	searchWireOpTextDateRange   uint16 = searchwire.OpTextDateRange
+	searchWireOpDenseKnn         uint16 = searchwire.OpDenseKnn
+	searchWireOpTextMatch        uint16 = searchwire.OpTextMatch
+	searchWireOpTextTerm         uint16 = searchwire.OpTextTerm
+	searchWireOpTextMatchPhrase  uint16 = searchwire.OpTextMatchPhrase
+	searchWireOpTextQueryString  uint16 = searchwire.OpTextQueryString
+	searchWireOpTextBool         uint16 = searchwire.OpTextBool
+	searchWireOpTextPrefix       uint16 = searchwire.OpTextPrefix
+	searchWireOpTextWildcard     uint16 = searchwire.OpTextWildcard
+	searchWireOpTextRegexp       uint16 = searchwire.OpTextRegexp
+	searchWireOpTextFuzzy        uint16 = searchwire.OpTextFuzzy
+	searchWireOpTextMatchAll     uint16 = searchwire.OpTextMatchAll
+	searchWireOpTextMatchNone    uint16 = searchwire.OpTextMatchNone
+	searchWireOpTextDateRange    uint16 = searchwire.OpTextDateRange
+	searchWireOpTextNumericRange uint16 = searchwire.OpTextNumericRange
+	searchWireOpTextGeoDistance  uint16 = searchwire.OpTextGeoDistance
+	searchWireOpTextGeoBBox      uint16 = searchwire.OpTextGeoBBox
+	searchWireOpTextGeoPolygon   uint16 = searchwire.OpTextGeoPolygon
 )
 
 type searchWireDenseRequest = searchwire.DenseRequest
@@ -35,6 +40,10 @@ type searchWireTextWildcardRequest = searchwire.TextRequest
 type searchWireTextRegexpRequest = searchwire.TextRequest
 type searchWireTextFuzzyRequest = searchwire.TextFuzzyRequest
 type searchWireTextDateRangeRequest = searchwire.TextDateRangeRequest
+type searchWireTextNumericRangeRequest = searchwire.TextNumericRangeRequest
+type searchWireTextGeoDistanceRequest = searchwire.TextGeoDistanceRequest
+type searchWireTextGeoBoundingBoxRequest = searchwire.TextGeoBoundingBoxRequest
+type searchWireTextGeoBoundingPolygonRequest = searchwire.TextGeoBoundingPolygonRequest
 type searchWireTextClause = searchwire.TextClause
 type searchWireTextBoolRequest = searchwire.TextBoolRequest
 type searchWireHit = searchwire.Hit
@@ -97,6 +106,22 @@ func encodeSearchWireTextDateRangeRequest(indexName, field, start, end string, i
 	return searchwire.EncodeTextDateRangeRequest(indexName, field, start, end, inclusiveStart, inclusiveEnd, parser, limit, offset)
 }
 
+func encodeSearchWireTextNumericRangeRequest(indexName, field string, min, max *float64, inclusiveMin, inclusiveMax *bool, limit, offset uint32) []byte {
+	return searchwire.EncodeTextNumericRangeRequest(indexName, field, min, max, inclusiveMin, inclusiveMax, limit, offset)
+}
+
+func encodeSearchWireTextGeoDistanceRequest(indexName, field string, lon, lat float64, distance string, limit, offset uint32) []byte {
+	return searchwire.EncodeTextGeoDistanceRequest(indexName, field, lon, lat, distance, limit, offset)
+}
+
+func encodeSearchWireTextGeoBoundingBoxRequest(indexName, field string, topLeftLon, topLeftLat, bottomRightLon, bottomRightLat float64, limit, offset uint32) []byte {
+	return searchwire.EncodeTextGeoBoundingBoxRequest(indexName, field, topLeftLon, topLeftLat, bottomRightLon, bottomRightLat, limit, offset)
+}
+
+func encodeSearchWireTextGeoBoundingPolygonRequest(indexName, field string, points []blevegeo.Point, limit, offset uint32) []byte {
+	return searchwire.EncodeTextGeoBoundingPolygonRequest(indexName, field, points, limit, offset)
+}
+
 func encodeSearchWireTextBoolRequest(indexName string, must, should, mustNot []searchWireTextClause, limit, offset uint32) []byte {
 	return searchwire.EncodeTextBoolRequest(indexName, must, should, mustNot, limit, offset)
 }
@@ -143,6 +168,22 @@ func decodeSearchWireTextMatchNoneRequest(raw []byte) (searchWireTextMatchReques
 
 func decodeSearchWireTextDateRangeRequest(raw []byte) (searchWireTextDateRangeRequest, error) {
 	return searchwire.DecodeTextDateRangeRequest(raw)
+}
+
+func decodeSearchWireTextNumericRangeRequest(raw []byte) (searchWireTextNumericRangeRequest, error) {
+	return searchwire.DecodeTextNumericRangeRequest(raw)
+}
+
+func decodeSearchWireTextGeoDistanceRequest(raw []byte) (searchWireTextGeoDistanceRequest, error) {
+	return searchwire.DecodeTextGeoDistanceRequest(raw)
+}
+
+func decodeSearchWireTextGeoBoundingBoxRequest(raw []byte) (searchWireTextGeoBoundingBoxRequest, error) {
+	return searchwire.DecodeTextGeoBoundingBoxRequest(raw)
+}
+
+func decodeSearchWireTextGeoBoundingPolygonRequest(raw []byte) (searchWireTextGeoBoundingPolygonRequest, error) {
+	return searchwire.DecodeTextGeoBoundingPolygonRequest(raw)
 }
 
 func decodeSearchWireTextBoolRequest(raw []byte) (searchWireTextBoolRequest, error) {

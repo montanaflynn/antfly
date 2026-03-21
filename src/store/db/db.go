@@ -49,6 +49,7 @@ import (
 	"github.com/antflydb/antfly/src/store/s3storage"
 	"github.com/antflydb/antfly/src/store/storeutils"
 	"github.com/blevesearch/bleve/v2"
+	blevegeo "github.com/blevesearch/bleve/v2/geo"
 	"github.com/blevesearch/bleve/v2/search"
 	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/blevesearch/sear"
@@ -3741,6 +3742,14 @@ func (s *DBImpl) searchWireFastPath(ctx context.Context, encodedRequest []byte, 
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	case searchWireOpTextDateRange:
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextNumericRange:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextGeoDistance:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextGeoBBox:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextGeoPolygon:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	default:
 		return nil, fmt.Errorf("unsupported search wire op: %d", op)
 	}
@@ -3858,6 +3867,44 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		}
 		bleveReq = bleve.NewSearchRequestOptions(q, int(rangeReq.Limit), int(rangeReq.Offset), false)
 		indexName = rangeReq.IndexName
+	case searchWireOpTextNumericRange:
+		rangeReq, decodeErr := decodeSearchWireTextNumericRangeRequest(encodedRequest)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		q := query.NewNumericRangeInclusiveQuery(rangeReq.Min, rangeReq.Max, rangeReq.InclusiveMin, rangeReq.InclusiveMax)
+		q.SetField(rangeReq.Field)
+		bleveReq = bleve.NewSearchRequestOptions(q, int(rangeReq.Limit), int(rangeReq.Offset), false)
+		indexName = rangeReq.IndexName
+	case searchWireOpTextGeoDistance:
+		geoReq, decodeErr := decodeSearchWireTextGeoDistanceRequest(encodedRequest)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		q := query.NewGeoDistanceQuery(geoReq.Lon, geoReq.Lat, geoReq.Distance)
+		q.SetField(geoReq.Field)
+		bleveReq = bleve.NewSearchRequestOptions(q, int(geoReq.Limit), int(geoReq.Offset), false)
+		indexName = geoReq.IndexName
+	case searchWireOpTextGeoBBox:
+		boxReq, decodeErr := decodeSearchWireTextGeoBoundingBoxRequest(encodedRequest)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		q := query.NewGeoBoundingBoxQuery(boxReq.TopLeftLon, boxReq.TopLeftLat, boxReq.BottomRightLon, boxReq.BottomRightLat)
+		q.SetField(boxReq.Field)
+		bleveReq = bleve.NewSearchRequestOptions(q, int(boxReq.Limit), int(boxReq.Offset), false)
+		indexName = boxReq.IndexName
+	case searchWireOpTextGeoPolygon:
+		polyReq, decodeErr := decodeSearchWireTextGeoBoundingPolygonRequest(encodedRequest)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		points := make([]blevegeo.Point, len(polyReq.Points))
+		copy(points, polyReq.Points)
+		q := query.NewGeoBoundingPolygonQuery(points)
+		q.SetField(polyReq.Field)
+		bleveReq = bleve.NewSearchRequestOptions(q, int(polyReq.Limit), int(polyReq.Offset), false)
+		indexName = polyReq.IndexName
 	default:
 		return nil, fmt.Errorf("unsupported text wire op: %d", op)
 	}
