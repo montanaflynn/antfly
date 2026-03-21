@@ -3780,6 +3780,16 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		if err == nil {
 			q := query.NewMatchQuery(textReq.Text)
 			q.SetField(textReq.Field)
+			q.Analyzer = textReq.Analyzer
+			if textReq.Auto {
+				q.SetAutoFuzziness(true)
+			} else if textReq.Fuzziness != 0 {
+				q.SetFuzziness(int(textReq.Fuzziness))
+			}
+			if textReq.Prefix != 0 {
+				q.SetPrefix(int(textReq.Prefix))
+			}
+			q.SetOperator(query.MatchQueryOperator(textReq.Operator))
 			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
 			indexName = textReq.IndexName
 		}
@@ -3796,6 +3806,12 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		if err == nil {
 			q := query.NewMatchPhraseQuery(textReq.Text)
 			q.SetField(textReq.Field)
+			q.Analyzer = textReq.Analyzer
+			if textReq.Auto {
+				q.SetAutoFuzziness(true)
+			} else if textReq.Fuzziness != 0 {
+				q.SetFuzziness(int(textReq.Fuzziness))
+			}
 			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
 			indexName = textReq.IndexName
 		}

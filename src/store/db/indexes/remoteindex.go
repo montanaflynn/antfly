@@ -988,7 +988,11 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 		if typed.Field() == "" || typed.Match == "" {
 			return nil, 0, false
 		}
-		return encodeTextSearchWire(searchWireOpTextMatch, "full_text_index", typed.Field(), typed.Match, uint32(req.Size), uint32(req.From)), searchWireOpTextMatch, true
+		fuzziness, auto, ok := searchWireMatchFuzziness(typed)
+		if !ok {
+			return nil, 0, false
+		}
+		return searchwire.EncodeTextMatchRequest("full_text_index", typed.Field(), typed.Match, typed.Analyzer, uint16(typed.Prefix), fuzziness, auto, uint8(typed.Operator), uint32(req.Size), uint32(req.From)), searchWireOpTextMatch, true
 	case *query.TermQuery:
 		if typed.Field() == "" || typed.Term == "" {
 			return nil, 0, false
@@ -998,7 +1002,11 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 		if typed.Field() == "" || typed.MatchPhrase == "" {
 			return nil, 0, false
 		}
-		return encodeTextSearchWire(searchWireOpTextMatchPhrase, "full_text_index", typed.Field(), typed.MatchPhrase, uint32(req.Size), uint32(req.From)), searchWireOpTextMatchPhrase, true
+		fuzziness, auto, ok := searchWireMatchPhraseFuzziness(typed)
+		if !ok {
+			return nil, 0, false
+		}
+		return searchwire.EncodeTextMatchPhraseRequest("full_text_index", typed.Field(), typed.MatchPhrase, typed.Analyzer, fuzziness, auto, uint32(req.Size), uint32(req.From)), searchWireOpTextMatchPhrase, true
 	case *query.PhraseQuery:
 		if typed.Field() == "" || len(typed.Terms) == 0 {
 			return nil, 0, false
@@ -1046,6 +1054,19 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 		return searchwire.EncodeTextMatchAllRequest("full_text_index", uint32(req.Size), uint32(req.From)), searchWireOpTextMatchAll, true
 	case *query.MatchNoneQuery:
 		return searchwire.EncodeTextMatchNoneRequest("full_text_index", uint32(req.Size), uint32(req.From)), searchWireOpTextMatchNone, true
+	case *query.DateRangeQuery:
+		if typed.Field() == "" || (typed.Start.IsZero() && typed.End.IsZero()) {
+			return nil, 0, false
+		}
+		var start string
+		if !typed.Start.IsZero() {
+			start = typed.Start.Time.Format(time.RFC3339Nano)
+		}
+		var end string
+		if !typed.End.IsZero() {
+			end = typed.End.Time.Format(time.RFC3339Nano)
+		}
+		return searchwire.EncodeTextDateRangeRequest("full_text_index", typed.Field(), start, end, typed.InclusiveStart, typed.InclusiveEnd, "", uint32(req.Size), uint32(req.From)), searchWireOpTextDateRange, true
 	case *query.DateRangeStringQuery:
 		if typed.Field() == "" {
 			return nil, 0, false
@@ -1147,8 +1168,66 @@ func searchWirePhraseFuzziness(q any) (uint16, bool, bool) {
 	}
 }
 
+func searchWireMatchFuzziness(q *query.MatchQuery) (uint16, bool, bool) {
+	payload, err := json.Marshal(q)
+	if err != nil {
+		return 0, false, false
+	}
+	var aux struct {
+		Fuzziness any `json:"fuzziness"`
+	}
+	if err := json.Unmarshal(payload, &aux); err != nil {
+		return 0, false, false
+	}
+	switch value := aux.Fuzziness.(type) {
+	case string:
+		if value == "auto" {
+			return 0, true, true
+		}
+		return 0, false, false
+	case float64:
+		if value < 0 || value > math.MaxUint16 {
+			return 0, false, false
+		}
+		return uint16(value), false, true
+	case nil:
+		return 0, false, true
+	default:
+		return 0, false, false
+	}
+}
+
+func searchWireMatchPhraseFuzziness(q *query.MatchPhraseQuery) (uint16, bool, bool) {
+	payload, err := json.Marshal(q)
+	if err != nil {
+		return 0, false, false
+	}
+	var aux struct {
+		Fuzziness any `json:"fuzziness"`
+	}
+	if err := json.Unmarshal(payload, &aux); err != nil {
+		return 0, false, false
+	}
+	switch value := aux.Fuzziness.(type) {
+	case string:
+		if value == "auto" {
+			return 0, true, true
+		}
+		return 0, false, false
+	case float64:
+		if value < 0 || value > math.MaxUint16 {
+			return 0, false, false
+		}
+		return uint16(value), false, true
+	case nil:
+		return 0, false, true
+	default:
+		return 0, false, false
+	}
+}
+
 func encodeTextSearchWire(op uint16, indexName, field, text string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextRequest(op, indexName, field, text, limit, offset)
+	return searchwire.EncodeTextRequest(op, indexName, field, text, "", 0, 0, false, 0, limit, offset)
 }
 
 func encodeSearchWireTextBool(indexName string, must, should, mustNot []searchwire.TextClause, limit, offset uint32) []byte {

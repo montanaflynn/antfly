@@ -55,6 +55,11 @@ type TextRequest struct {
 	IndexName string
 	Field     string
 	Text      string
+	Analyzer  string
+	Prefix    uint16
+	Fuzziness uint16
+	Auto      bool
+	Operator  uint8
 	Limit     uint32
 	Offset    uint32
 }
@@ -275,32 +280,32 @@ func DecodeDenseRequest(raw []byte) (DenseRequest, error) {
 	}, nil
 }
 
-func EncodeTextMatchRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextMatch, indexName, field, text, limit, offset)
+func EncodeTextMatchRequest(indexName, field, text, analyzer string, prefix, fuzziness uint16, auto bool, operator uint8, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextMatch, indexName, field, text, analyzer, prefix, fuzziness, auto, operator, limit, offset)
 }
 
 func EncodeTextTermRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextTerm, indexName, field, text, limit, offset)
+	return EncodeTextRequest(OpTextTerm, indexName, field, text, "", 0, 0, false, 0, limit, offset)
 }
 
-func EncodeTextMatchPhraseRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextMatchPhrase, indexName, field, text, limit, offset)
+func EncodeTextMatchPhraseRequest(indexName, field, text, analyzer string, fuzziness uint16, auto bool, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextMatchPhrase, indexName, field, text, analyzer, 0, fuzziness, auto, 0, limit, offset)
 }
 
 func EncodeTextQueryStringRequest(indexName, text string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextQueryString, indexName, "", text, limit, offset)
+	return EncodeTextRequest(OpTextQueryString, indexName, "", text, "", 0, 0, false, 0, limit, offset)
 }
 
 func EncodeTextPrefixRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextPrefix, indexName, field, text, limit, offset)
+	return EncodeTextRequest(OpTextPrefix, indexName, field, text, "", 0, 0, false, 0, limit, offset)
 }
 
 func EncodeTextWildcardRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextWildcard, indexName, field, text, limit, offset)
+	return EncodeTextRequest(OpTextWildcard, indexName, field, text, "", 0, 0, false, 0, limit, offset)
 }
 
 func EncodeTextRegexpRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextRegexp, indexName, field, text, limit, offset)
+	return EncodeTextRequest(OpTextRegexp, indexName, field, text, "", 0, 0, false, 0, limit, offset)
 }
 
 func EncodeTextFuzzyRequest(indexName, field, text string, prefix, fuzziness uint16, auto bool, limit, offset uint32) []byte {
@@ -343,11 +348,11 @@ func EncodeTextFuzzyRequest(indexName, field, text string, prefix, fuzziness uin
 }
 
 func EncodeTextMatchAllRequest(indexName string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextMatchAll, indexName, "", "", limit, offset)
+	return EncodeTextRequest(OpTextMatchAll, indexName, "", "", "", 0, 0, false, 0, limit, offset)
 }
 
 func EncodeTextMatchNoneRequest(indexName string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextMatchNone, indexName, "", "", limit, offset)
+	return EncodeTextRequest(OpTextMatchNone, indexName, "", "", "", 0, 0, false, 0, limit, offset)
 }
 
 func EncodeTextDateRangeRequest(indexName, field, start, end string, inclusiveStart, inclusiveEnd *bool, parser string, limit, offset uint32) []byte {
@@ -822,9 +827,9 @@ func EncodeTextBoolRequest(indexName string, must, should, mustNot []TextClause,
 	return out
 }
 
-func EncodeTextRequest(op uint16, indexName, field, text string, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4
-	out := make([]byte, headerLen+len(indexName)+len(field)+len(text))
+func EncodeTextRequest(op uint16, indexName, field, text, analyzer string, prefix, fuzziness uint16, auto bool, operator uint8, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 1 + 1
+	out := make([]byte, headerLen+len(indexName)+len(field)+len(text)+len(analyzer))
 	cursor := 0
 	binary.LittleEndian.PutUint32(out[cursor:], Magic)
 	cursor += 4
@@ -832,7 +837,11 @@ func EncodeTextRequest(op uint16, indexName, field, text string, limit, offset u
 	cursor += 2
 	binary.LittleEndian.PutUint16(out[cursor:], op)
 	cursor += 2
-	binary.LittleEndian.PutUint32(out[cursor:], 0)
+	var flags uint32
+	if auto {
+		flags |= 1
+	}
+	binary.LittleEndian.PutUint32(out[cursor:], flags)
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], limit)
 	cursor += 4
@@ -844,28 +853,44 @@ func EncodeTextRequest(op uint16, indexName, field, text string, limit, offset u
 	cursor += 2
 	binary.LittleEndian.PutUint32(out[cursor:], uint32(len(text)))
 	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(analyzer)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], prefix)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], fuzziness)
+	cursor += 2
+	out[cursor] = operator
+	cursor += 1
+	cursor += 1
 	copy(out[cursor:], indexName)
 	cursor += len(indexName)
 	copy(out[cursor:], field)
 	cursor += len(field)
 	copy(out[cursor:], text)
+	cursor += len(text)
+	copy(out[cursor:], analyzer)
 	return out
 }
 
 func DecodeTextRequest(raw []byte, opExpected uint16) (TextRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 1 + 1
 	if len(raw) < headerLen {
 		return TextRequest{}, ErrInvalid
 	}
 	if op, ok := Op(raw); !ok || op != opExpected {
 		return TextRequest{}, ErrInvalid
 	}
+	flags := binary.LittleEndian.Uint32(raw[8:12])
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
 	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
 	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
 	textLen := int(binary.LittleEndian.Uint32(raw[24:28]))
-	if len(raw) < headerLen+indexNameLen+fieldLen+textLen {
+	analyzerLen := int(binary.LittleEndian.Uint16(raw[28:30]))
+	prefix := binary.LittleEndian.Uint16(raw[30:32])
+	fuzziness := binary.LittleEndian.Uint16(raw[32:34])
+	operator := raw[34]
+	if len(raw) < headerLen+indexNameLen+fieldLen+textLen+analyzerLen {
 		return TextRequest{}, ErrInvalid
 	}
 	cursor := headerLen
@@ -874,10 +899,17 @@ func DecodeTextRequest(raw []byte, opExpected uint16) (TextRequest, error) {
 	field := string(raw[cursor : cursor+fieldLen])
 	cursor += fieldLen
 	text := string(raw[cursor : cursor+textLen])
+	cursor += textLen
+	analyzer := string(raw[cursor : cursor+analyzerLen])
 	return TextRequest{
 		IndexName: indexName,
 		Field:     field,
 		Text:      text,
+		Analyzer:  analyzer,
+		Prefix:    prefix,
+		Fuzziness: fuzziness,
+		Auto:      flags&1 != 0,
+		Operator:  operator,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil

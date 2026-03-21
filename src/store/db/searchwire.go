@@ -74,16 +74,16 @@ func decodeSearchWireDenseRequest(raw []byte) (searchWireDenseRequest, error) {
 	return searchwire.DecodeDenseRequest(raw)
 }
 
-func encodeSearchWireTextMatchRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextMatchRequest(indexName, field, text, limit, offset)
+func encodeSearchWireTextMatchRequest(indexName, field, text, analyzer string, prefix, fuzziness uint16, auto bool, operator uint8, limit, offset uint32) []byte {
+	return searchwire.EncodeTextMatchRequest(indexName, field, text, analyzer, prefix, fuzziness, auto, operator, limit, offset)
 }
 
 func encodeSearchWireTextTermRequest(indexName, field, text string, limit, offset uint32) []byte {
 	return searchwire.EncodeTextTermRequest(indexName, field, text, limit, offset)
 }
 
-func encodeSearchWireTextMatchPhraseRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextMatchPhraseRequest(indexName, field, text, limit, offset)
+func encodeSearchWireTextMatchPhraseRequest(indexName, field, text, analyzer string, fuzziness uint16, auto bool, limit, offset uint32) []byte {
+	return searchwire.EncodeTextMatchPhraseRequest(indexName, field, text, analyzer, fuzziness, auto, limit, offset)
 }
 
 func encodeSearchWireTextQueryStringRequest(indexName, text string, limit, offset uint32) []byte {

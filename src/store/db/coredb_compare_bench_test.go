@@ -298,7 +298,7 @@ func BenchmarkCoreDBBackends(b *testing.B) {
 					err      error
 				)
 				if backend.name == "zig" {
-					reqBytes = encodeSearchWireTextMatchRequest("full_text_index", "content", "alpha", 10, 0)
+					reqBytes = encodeSearchWireTextMatchRequest("full_text_index", "content", "alpha", "", 0, 0, false, 0, 10, 0)
 				} else {
 					reqBytes, err = json.Marshal(req)
 					if err != nil {
