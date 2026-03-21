@@ -4074,6 +4074,16 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 	case searchWireOpTextMatch:
 		q := query.NewMatchQuery(clause.Text)
 		q.SetField(clause.Field)
+		q.Analyzer = clause.Analyzer
+		if clause.Auto {
+			q.SetAutoFuzziness(true)
+		} else if clause.Fuzziness != 0 {
+			q.SetFuzziness(int(clause.Fuzziness))
+		}
+		if clause.Prefix != 0 {
+			q.SetPrefix(int(clause.Prefix))
+		}
+		q.SetOperator(query.MatchQueryOperator(clause.Operator))
 		return q, nil
 	case searchWireOpTextTerm:
 		q := query.NewTermQuery(clause.Text)
@@ -4082,6 +4092,12 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 	case searchWireOpTextMatchPhrase:
 		q := query.NewMatchPhraseQuery(clause.Text)
 		q.SetField(clause.Field)
+		q.Analyzer = clause.Analyzer
+		if clause.Auto {
+			q.SetAutoFuzziness(true)
+		} else if clause.Fuzziness != 0 {
+			q.SetFuzziness(int(clause.Fuzziness))
+		}
 		return q, nil
 	case searchWireOpTextQueryString:
 		return query.NewQueryStringQuery(clause.Text), nil

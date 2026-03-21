@@ -1394,7 +1394,20 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 		if typed.Field() == "" || typed.Match == "" {
 			return searchwire.TextClause{}, false
 		}
-		return searchwire.TextClause{Op: searchWireOpTextMatch, Field: typed.Field(), Text: typed.Match}, true
+		fuzziness, auto, ok := searchWireMatchFuzziness(typed)
+		if !ok {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{
+			Op:        searchWireOpTextMatch,
+			Field:     typed.Field(),
+			Text:      typed.Match,
+			Analyzer:  typed.Analyzer,
+			Prefix:    uint16(typed.Prefix),
+			Fuzziness: fuzziness,
+			Auto:      auto,
+			Operator:  uint8(typed.Operator),
+		}, true
 	case *query.TermQuery:
 		if typed.Field() == "" || typed.Term == "" {
 			return searchwire.TextClause{}, false
@@ -1404,7 +1417,18 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 		if typed.Field() == "" || typed.MatchPhrase == "" {
 			return searchwire.TextClause{}, false
 		}
-		return searchwire.TextClause{Op: searchWireOpTextMatchPhrase, Field: typed.Field(), Text: typed.MatchPhrase}, true
+		fuzziness, auto, ok := searchWireMatchPhraseFuzziness(typed)
+		if !ok {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{
+			Op:        searchWireOpTextMatchPhrase,
+			Field:     typed.Field(),
+			Text:      typed.MatchPhrase,
+			Analyzer:  typed.Analyzer,
+			Fuzziness: fuzziness,
+			Auto:      auto,
+		}, true
 	case *query.QueryStringQuery:
 		if typed.Query == "" {
 			return searchwire.TextClause{}, false

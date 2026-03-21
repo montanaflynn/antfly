@@ -69,9 +69,11 @@ type TextClause struct {
 	Op        uint16
 	Field     string
 	Text      string
+	Analyzer  string
 	Prefix    uint16
 	Fuzziness uint16
 	Auto      bool
+	Operator  uint8
 }
 
 type TextBoolRequest struct {
@@ -1698,9 +1700,9 @@ func DecodeHits(raw []byte, expectedOp uint16) (uint64, []Hit, error) {
 func encodedClausesLen(clauses []TextClause) int {
 	total := 0
 	for _, clause := range clauses {
-		total += 2 + 2 + 4 + len(clause.Field) + len(clause.Text)
-		if clause.Op == OpTextFuzzy {
-			total += 2 + 2 + 1
+		total += 2 + 2 + 4 + 2 + 2 + 2 + 1 + 1 + len(clause.Field) + len(clause.Text) + len(clause.Analyzer)
+		if clause.Op == OpTextMatch || clause.Op == OpTextMatchPhrase || clause.Op == OpTextFuzzy {
+			// fields are encoded unconditionally for simple decoding; clause type decides how to use them.
 		}
 	}
 	return total
@@ -1714,27 +1716,31 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 		*cursor += 2
 		binary.LittleEndian.PutUint32(out[*cursor:], uint32(len(clause.Text)))
 		*cursor += 4
-		if clause.Op == OpTextFuzzy {
-			binary.LittleEndian.PutUint16(out[*cursor:], clause.Prefix)
-			*cursor += 2
-			binary.LittleEndian.PutUint16(out[*cursor:], clause.Fuzziness)
-			*cursor += 2
-			if clause.Auto {
-				out[*cursor] = 1
-			}
-			*cursor += 1
+		binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(clause.Analyzer)))
+		*cursor += 2
+		binary.LittleEndian.PutUint16(out[*cursor:], clause.Prefix)
+		*cursor += 2
+		binary.LittleEndian.PutUint16(out[*cursor:], clause.Fuzziness)
+		*cursor += 2
+		if clause.Auto {
+			out[*cursor] = 1
 		}
+		*cursor += 1
+		out[*cursor] = clause.Operator
+		*cursor += 1
 		copy(out[*cursor:], clause.Field)
 		*cursor += len(clause.Field)
 		copy(out[*cursor:], clause.Text)
 		*cursor += len(clause.Text)
+		copy(out[*cursor:], clause.Analyzer)
+		*cursor += len(clause.Analyzer)
 	}
 }
 
 func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error) {
 	clauses := make([]TextClause, count)
 	for i := 0; i < count; i++ {
-		if len(raw) < cursor+8 {
+		if len(raw) < cursor+16 {
 			return nil, 0, ErrInvalid
 		}
 		op := binary.LittleEndian.Uint16(raw[cursor : cursor+2])
@@ -1746,28 +1752,26 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 		cursor += 2
 		textLen := int(binary.LittleEndian.Uint32(raw[cursor : cursor+4]))
 		cursor += 4
-		var prefix uint16
-		var fuzziness uint16
-		var auto bool
-		if op == OpTextFuzzy {
-			if len(raw) < cursor+5 {
-				return nil, 0, ErrInvalid
-			}
-			prefix = binary.LittleEndian.Uint16(raw[cursor : cursor+2])
-			cursor += 2
-			fuzziness = binary.LittleEndian.Uint16(raw[cursor : cursor+2])
-			cursor += 2
-			auto = raw[cursor] != 0
-			cursor += 1
-		}
-		if len(raw) < cursor+fieldLen+textLen {
+		analyzerLen := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
+		cursor += 2
+		prefix := binary.LittleEndian.Uint16(raw[cursor : cursor+2])
+		cursor += 2
+		fuzziness := binary.LittleEndian.Uint16(raw[cursor : cursor+2])
+		cursor += 2
+		auto := raw[cursor] != 0
+		cursor += 1
+		operator := raw[cursor]
+		cursor += 1
+		if len(raw) < cursor+fieldLen+textLen+analyzerLen {
 			return nil, 0, ErrInvalid
 		}
 		field := string(raw[cursor : cursor+fieldLen])
 		cursor += fieldLen
 		text := string(raw[cursor : cursor+textLen])
 		cursor += textLen
-		clauses[i] = TextClause{Op: op, Field: field, Text: text, Prefix: prefix, Fuzziness: fuzziness, Auto: auto}
+		analyzer := string(raw[cursor : cursor+analyzerLen])
+		cursor += analyzerLen
+		clauses[i] = TextClause{Op: op, Field: field, Text: text, Analyzer: analyzer, Prefix: prefix, Fuzziness: fuzziness, Auto: auto, Operator: operator}
 	}
 	return clauses, cursor, nil
 }

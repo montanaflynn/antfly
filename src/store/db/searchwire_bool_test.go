@@ -9,6 +9,7 @@ import (
 	"github.com/antflydb/antfly/lib/types"
 	"github.com/antflydb/antfly/src/store/db/indexes"
 	"github.com/antflydb/antfly/src/store/searchwire"
+	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/goccy/go-json"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
@@ -122,4 +123,112 @@ func TestSearchWireBoolFastPath_WithFuzzyClause(t *testing.T) {
 	require.Equal(t, uint64(1), total)
 	require.Len(t, hits, 1)
 	require.Equal(t, "doc-1", hits[0].ID)
+}
+
+func TestSearchWireBoolFastPath_PreservesMatchOperator(t *testing.T) {
+	dir := t.TempDir()
+	db := &DBImpl{logger: zaptest.NewLogger(t)}
+	require.NoError(t, db.Open(dir, false, nil, types.Range{nil, []byte{0xFF}}))
+	defer db.Close()
+
+	tableSchema := &schema.TableSchema{
+		DefaultType: "default",
+		DocumentSchemas: map[string]schema.DocumentSchema{
+			"default": {
+				Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"body": map[string]any{"type": "string"},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, db.UpdateSchema(tableSchema))
+	require.NoError(t, db.AddIndex(*indexes.NewFullTextIndexConfig("full_text_index_v0", false)))
+
+	ctx := context.Background()
+	for _, doc := range []struct {
+		id   string
+		body string
+	}{
+		{id: "doc-1", body: "hello"},
+		{id: "doc-2", body: "world"},
+		{id: "doc-3", body: "hello world"},
+	} {
+		payload, err := json.Marshal(map[string]any{"body": doc.body})
+		require.NoError(t, err)
+		err = db.Batch(ctx, [][2][]byte{{[]byte(doc.id), payload}}, nil, Op_SyncLevelFullText)
+		if err != nil && !errors.Is(err, ErrPartialSuccess) {
+			require.NoError(t, err)
+		}
+	}
+
+	reqBytes := encodeSearchWireTextBoolRequest("full_text_index", []searchWireTextClause{{
+		Op:       searchWireOpTextMatch,
+		Field:    "body",
+		Text:     "hello world",
+		Operator: uint8(query.MatchQueryOperatorAnd),
+	}}, nil, nil, 10, 0)
+	resBytes, err := db.Search(ctx, reqBytes)
+	require.NoError(t, err)
+	total, hits, err := searchwire.DecodeHits(resBytes, searchWireOpTextBool)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), total)
+	require.Len(t, hits, 1)
+	require.Equal(t, "doc-3", hits[0].ID)
+}
+
+func TestSearchWireBoolFastPath_PreservesMatchPhraseAutoFuzziness(t *testing.T) {
+	dir := t.TempDir()
+	db := &DBImpl{logger: zaptest.NewLogger(t)}
+	require.NoError(t, db.Open(dir, false, nil, types.Range{nil, []byte{0xFF}}))
+	defer db.Close()
+
+	tableSchema := &schema.TableSchema{
+		DefaultType: "default",
+		DocumentSchemas: map[string]schema.DocumentSchema{
+			"default": {
+				Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"body": map[string]any{"type": "string"},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, db.UpdateSchema(tableSchema))
+	require.NoError(t, db.AddIndex(*indexes.NewFullTextIndexConfig("full_text_index_v0", false)))
+
+	ctx := context.Background()
+	for _, doc := range []struct {
+		id   string
+		body string
+	}{
+		{id: "doc-1", body: "alpha beta"},
+		{id: "doc-2", body: "alpha betx"},
+		{id: "doc-3", body: "alpha gamma"},
+	} {
+		payload, err := json.Marshal(map[string]any{"body": doc.body})
+		require.NoError(t, err)
+		err = db.Batch(ctx, [][2][]byte{{[]byte(doc.id), payload}}, nil, Op_SyncLevelFullText)
+		if err != nil && !errors.Is(err, ErrPartialSuccess) {
+			require.NoError(t, err)
+		}
+	}
+
+	reqBytes := encodeSearchWireTextBoolRequest("full_text_index", []searchWireTextClause{{
+		Op:        searchWireOpTextMatchPhrase,
+		Field:     "body",
+		Text:      "alpha beta",
+		Auto:      true,
+		Fuzziness: 0,
+	}}, nil, nil, 10, 0)
+	resBytes, err := db.Search(ctx, reqBytes)
+	require.NoError(t, err)
+	total, hits, err := searchwire.DecodeHits(resBytes, searchWireOpTextBool)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), total)
+	require.Len(t, hits, 2)
 }
