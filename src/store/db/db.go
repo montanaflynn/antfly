@@ -4123,6 +4123,23 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 		return q, nil
 	case searchWireOpTextQueryString:
 		return query.NewQueryStringQuery(clause.Text), nil
+	case searchWireOpTextTermRange:
+		q := query.NewTermRangeInclusiveQuery(clause.Text, clause.AltText, boolPtr(clause.InclMin), boolPtr(clause.InclMax))
+		q.SetField(clause.Field)
+		return q, nil
+	case searchWireOpTextDocID:
+		if len(clause.Terms) == 0 {
+			return nil, errSearchWireInvalid
+		}
+		return query.NewDocIDQuery(clause.Terms), nil
+	case searchWireOpTextBoolField:
+		q := query.NewBoolFieldQuery(clause.BoolValue)
+		q.SetField(clause.Field)
+		return q, nil
+	case searchWireOpTextIPRange:
+		q := query.NewIPRangeQuery(clause.Text)
+		q.SetField(clause.Field)
+		return q, nil
 	case searchWireOpTextPrefix:
 		q := query.NewPrefixQuery(clause.Text)
 		q.SetField(clause.Field)
@@ -4148,6 +4165,10 @@ func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error
 	default:
 		return nil, errSearchWireInvalid
 	}
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 func (s *DBImpl) resolveWireSearchIndexName(indexName string) string {

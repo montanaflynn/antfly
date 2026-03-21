@@ -1494,6 +1494,44 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 			Prefix:    uint16(typed.Prefix),
 			Fuzziness: uint16(typed.Fuzziness),
 		}, true
+	case *query.TermRangeQuery:
+		if typed.Field() == "" {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{
+			Op:      searchWireOpTextTermRange,
+			Field:   typed.Field(),
+			Text:    typed.Min,
+			AltText: typed.Max,
+			InclMin: typed.InclusiveMin != nil && *typed.InclusiveMin,
+			InclMax: typed.InclusiveMax != nil && *typed.InclusiveMax,
+		}, true
+	case *query.DocIDQuery:
+		if len(typed.IDs) == 0 {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{
+			Op:    searchWireOpTextDocID,
+			Terms: append([]string(nil), typed.IDs...),
+		}, true
+	case *query.BoolFieldQuery:
+		if typed.Field() == "" {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{
+			Op:        searchWireOpTextBoolField,
+			Field:     typed.Field(),
+			BoolValue: typed.Bool,
+		}, true
+	case *query.IPRangeQuery:
+		if typed.Field() == "" || typed.CIDR == "" {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{
+			Op:    searchWireOpTextIPRange,
+			Field: typed.Field(),
+			Text:  typed.CIDR,
+		}, true
 	default:
 		return searchwire.TextClause{}, false
 	}

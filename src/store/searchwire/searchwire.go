@@ -69,11 +69,15 @@ type TextClause struct {
 	Op        uint16
 	Field     string
 	Text      string
+	AltText   string
 	Analyzer  string
 	Prefix    uint16
 	Fuzziness uint16
 	Auto      bool
 	Operator  uint8
+	BoolValue bool
+	InclMin   bool
+	InclMax   bool
 	Terms     []string
 	TermSets  [][]string
 }
@@ -1702,7 +1706,7 @@ func DecodeHits(raw []byte, expectedOp uint16) (uint64, []Hit, error) {
 func encodedClausesLen(clauses []TextClause) int {
 	total := 0
 	for _, clause := range clauses {
-		total += 2 + 2 + 4 + 2 + 2 + 2 + 1 + 1 + 2 + 2 + len(clause.Field) + len(clause.Text) + len(clause.Analyzer)
+		total += 2 + 2 + 4 + 4 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 2 + len(clause.Field) + len(clause.Text) + len(clause.AltText) + len(clause.Analyzer)
 		for _, term := range clause.Terms {
 			total += 2 + len(term)
 		}
@@ -1724,6 +1728,8 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 		*cursor += 2
 		binary.LittleEndian.PutUint32(out[*cursor:], uint32(len(clause.Text)))
 		*cursor += 4
+		binary.LittleEndian.PutUint32(out[*cursor:], uint32(len(clause.AltText)))
+		*cursor += 4
 		binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(clause.Analyzer)))
 		*cursor += 2
 		binary.LittleEndian.PutUint16(out[*cursor:], clause.Prefix)
@@ -1736,6 +1742,18 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 		*cursor += 1
 		out[*cursor] = clause.Operator
 		*cursor += 1
+		var flags uint8
+		if clause.BoolValue {
+			flags |= 1 << 0
+		}
+		if clause.InclMin {
+			flags |= 1 << 1
+		}
+		if clause.InclMax {
+			flags |= 1 << 2
+		}
+		out[*cursor] = flags
+		*cursor += 1
 		binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(clause.Terms)))
 		*cursor += 2
 		binary.LittleEndian.PutUint16(out[*cursor:], uint16(len(clause.TermSets)))
@@ -1744,6 +1762,8 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 		*cursor += len(clause.Field)
 		copy(out[*cursor:], clause.Text)
 		*cursor += len(clause.Text)
+		copy(out[*cursor:], clause.AltText)
+		*cursor += len(clause.AltText)
 		copy(out[*cursor:], clause.Analyzer)
 		*cursor += len(clause.Analyzer)
 		for _, term := range clause.Terms {
@@ -1768,7 +1788,7 @@ func encodeClauses(out []byte, cursor *int, clauses []TextClause) {
 func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error) {
 	clauses := make([]TextClause, count)
 	for i := 0; i < count; i++ {
-		if len(raw) < cursor+20 {
+		if len(raw) < cursor+25 {
 			return nil, 0, ErrInvalid
 		}
 		op := binary.LittleEndian.Uint16(raw[cursor : cursor+2])
@@ -1780,6 +1800,8 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 		cursor += 2
 		textLen := int(binary.LittleEndian.Uint32(raw[cursor : cursor+4]))
 		cursor += 4
+		altTextLen := int(binary.LittleEndian.Uint32(raw[cursor : cursor+4]))
+		cursor += 4
 		analyzerLen := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
 		cursor += 2
 		prefix := binary.LittleEndian.Uint16(raw[cursor : cursor+2])
@@ -1790,17 +1812,21 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 		cursor += 1
 		operator := raw[cursor]
 		cursor += 1
+		flags := raw[cursor]
+		cursor += 1
 		termCount := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
 		cursor += 2
 		termSetCount := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
 		cursor += 2
-		if len(raw) < cursor+fieldLen+textLen+analyzerLen {
+		if len(raw) < cursor+fieldLen+textLen+altTextLen+analyzerLen {
 			return nil, 0, ErrInvalid
 		}
 		field := string(raw[cursor : cursor+fieldLen])
 		cursor += fieldLen
 		text := string(raw[cursor : cursor+textLen])
 		cursor += textLen
+		altText := string(raw[cursor : cursor+altTextLen])
+		cursor += altTextLen
 		analyzer := string(raw[cursor : cursor+analyzerLen])
 		cursor += analyzerLen
 		terms := make([]string, termCount)
@@ -1842,11 +1868,15 @@ func decodeClauses(raw []byte, cursor int, count int) ([]TextClause, int, error)
 			Op:        op,
 			Field:     field,
 			Text:      text,
+			AltText:   altText,
 			Analyzer:  analyzer,
 			Prefix:    prefix,
 			Fuzziness: fuzziness,
 			Auto:      auto,
 			Operator:  operator,
+			BoolValue: flags&(1<<0) != 0,
+			InclMin:   flags&(1<<1) != 0,
+			InclMax:   flags&(1<<2) != 0,
 			Terms:     terms,
 			TermSets:  termSets,
 		}
@@ -1860,7 +1890,7 @@ func validClauseOp(op uint16) bool {
 		return true
 	case OpTextPrefix, OpTextWildcard, OpTextRegexp:
 		return true
-	case OpTextFuzzy:
+	case OpTextFuzzy, OpTextTermRange, OpTextDocID, OpTextBoolField, OpTextIPRange:
 		return true
 	default:
 		return false
