@@ -14,6 +14,7 @@ import (
 	"github.com/antflydb/antfly/lib/types"
 	"github.com/antflydb/antfly/lib/vector"
 	"github.com/antflydb/antfly/src/store/db/indexes"
+	"github.com/antflydb/antfly/src/store/searchwire"
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/analysis/datetime/sanitized"
 	blevegeo "github.com/blevesearch/bleve/v2/geo"
@@ -1183,6 +1184,42 @@ func TestZigCoreDB_FullTextGeoShapePolygonQuery(t *testing.T) {
 		res.BleveSearchResult.Hits[0].ID,
 		res.BleveSearchResult.Hits[1].ID,
 	})
+}
+
+func TestZigCoreDB_FullTextGeoShapePolygonQueryWire(t *testing.T) {
+	db := openZigSearchTestDB(t)
+	ctx := context.Background()
+
+	fullTextConfig := indexes.NewFullTextIndexConfig("full_text_index", false)
+	require.NoError(t, db.AddIndex(*fullTextConfig))
+
+	for key, doc := range map[string]map[string]any{
+		"doc1": {"content": "alpha", "location": map[string]any{"lat": 5.0, "lon": 5.0}},
+		"doc2": {"content": "alpha", "location": map[string]any{"lat": 20.0, "lon": 20.0}},
+		"doc3": {"content": "alpha", "location": map[string]any{"lat": 3.0, "lon": 4.0}},
+	} {
+		docJSON, err := json.Marshal(doc)
+		require.NoError(t, err)
+		require.NoError(t, db.Batch(ctx, [][2][]byte{{[]byte(key), docJSON}}, nil, Op_SyncLevelFullText))
+	}
+
+	reqBytes := encodeSearchWireTextGeoShapeRequest("full_text_index", "location", "intersects", [][]blevegeo.Point{
+		{
+			{Lon: 0, Lat: 0},
+			{Lon: 10, Lat: 0},
+			{Lon: 10, Lat: 10},
+			{Lon: 0, Lat: 10},
+			{Lon: 0, Lat: 0},
+		},
+	}, 10, 0)
+	resBytes, err := db.Search(ctx, reqBytes)
+	require.NoError(t, err)
+
+	total, hits, err := searchwire.DecodeHits(resBytes, searchWireOpTextGeoShape)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), total)
+	require.Len(t, hits, 2)
+	assert.ElementsMatch(t, []string{"doc1", "doc3"}, []string{hits[0].ID, hits[1].ID})
 }
 
 func TestZigCoreDB_FullTextPrefixQuery(t *testing.T) {

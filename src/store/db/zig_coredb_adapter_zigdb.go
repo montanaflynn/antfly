@@ -1076,6 +1076,34 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 			return nil, err
 		}
 		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextGeoShape:
+		req, err := decodeSearchWireTextGeoShapeRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		coordinates := make([][][][]float64, len(req.Polygons))
+		for i, polygon := range req.Polygons {
+			ring := make([][]float64, len(polygon))
+			for j, point := range polygon {
+				ring[j] = []float64{point.Lon, point.Lat}
+			}
+			coordinates[i] = [][][]float64{ring}
+		}
+		shapeType := "multipolygon"
+		if len(coordinates) == 1 {
+			shapeType = "polygon"
+		}
+		q, err := blevequery.NewGeoShapeQuery(coordinates, shapeType, req.Relation)
+		if err != nil {
+			return nil, err
+		}
+		q.SetField(req.Field)
+		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
 	case searchWireOpTextTermRange:
 		req, err := decodeSearchWireTextTermRangeRequest(encodedRequest)
 		if err != nil {

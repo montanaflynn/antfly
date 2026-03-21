@@ -39,6 +39,7 @@ const (
 	OpTextIPRange      uint16 = 21
 	OpTextPhrase       uint16 = 22
 	OpTextMultiPhrase  uint16 = 23
+	OpTextGeoShape     uint16 = 24
 )
 
 var ErrInvalid = errors.New("invalid search wire payload")
@@ -141,6 +142,15 @@ type TextGeoBoundingPolygonRequest struct {
 	IndexName string
 	Field     string
 	Points    []blevegeo.Point
+	Limit     uint32
+	Offset    uint32
+}
+
+type TextGeoShapeRequest struct {
+	IndexName string
+	Field     string
+	Relation  string
+	Polygons  [][]blevegeo.Point
 	Limit     uint32
 	Offset    uint32
 }
@@ -554,6 +564,52 @@ func EncodeTextGeoBoundingPolygonRequest(indexName, field string, points []bleve
 		cursor += 8
 		binary.LittleEndian.PutUint64(out[cursor:], math.Float64bits(point.Lat))
 		cursor += 8
+	}
+	return out
+}
+
+func EncodeTextGeoShapeRequest(indexName, field, relation string, polygons [][]blevegeo.Point, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 1 + 1
+	pointsLen := 0
+	for _, polygon := range polygons {
+		pointsLen += 2 + len(polygon)*16
+	}
+	out := make([]byte, headerLen+len(indexName)+len(field)+pointsLen)
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], Magic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], Version)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], OpTextGeoShape)
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], 0)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(polygons)))
+	cursor += 2
+	out[cursor] = geoShapeRelationCode(relation)
+	cursor += 1
+	cursor += 1 // reserved
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	copy(out[cursor:], field)
+	cursor += len(field)
+	for _, polygon := range polygons {
+		binary.LittleEndian.PutUint16(out[cursor:], uint16(len(polygon)))
+		cursor += 2
+		for _, point := range polygon {
+			binary.LittleEndian.PutUint64(out[cursor:], math.Float64bits(point.Lon))
+			cursor += 8
+			binary.LittleEndian.PutUint64(out[cursor:], math.Float64bits(point.Lat))
+			cursor += 8
+		}
 	}
 	return out
 }
@@ -1209,6 +1265,90 @@ func DecodeTextGeoBoundingPolygonRequest(raw []byte) (TextGeoBoundingPolygonRequ
 		Limit:     limit,
 		Offset:    offset,
 	}, nil
+}
+
+func DecodeTextGeoShapeRequest(raw []byte) (TextGeoShapeRequest, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 1 + 1
+	if len(raw) < headerLen {
+		return TextGeoShapeRequest{}, ErrInvalid
+	}
+	if op, ok := Op(raw); !ok || op != OpTextGeoShape {
+		return TextGeoShapeRequest{}, ErrInvalid
+	}
+	limit := binary.LittleEndian.Uint32(raw[12:16])
+	offset := binary.LittleEndian.Uint32(raw[16:20])
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
+	polygonCount := int(binary.LittleEndian.Uint16(raw[24:26]))
+	relation, ok := decodeGeoShapeRelation(raw[26])
+	if !ok || polygonCount == 0 {
+		return TextGeoShapeRequest{}, ErrInvalid
+	}
+	if len(raw) < headerLen+indexNameLen+fieldLen {
+		return TextGeoShapeRequest{}, ErrInvalid
+	}
+	cursor := headerLen
+	indexName := string(raw[cursor : cursor+indexNameLen])
+	cursor += indexNameLen
+	field := string(raw[cursor : cursor+fieldLen])
+	cursor += fieldLen
+	polygons := make([][]blevegeo.Point, polygonCount)
+	for i := 0; i < polygonCount; i++ {
+		if len(raw) < cursor+2 {
+			return TextGeoShapeRequest{}, ErrInvalid
+		}
+		pointCount := int(binary.LittleEndian.Uint16(raw[cursor : cursor+2]))
+		cursor += 2
+		if pointCount < 3 || len(raw) < cursor+pointCount*16 {
+			return TextGeoShapeRequest{}, ErrInvalid
+		}
+		polygon := make([]blevegeo.Point, pointCount)
+		for j := range polygon {
+			polygon[j] = blevegeo.Point{
+				Lon: math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor : cursor+8])),
+				Lat: math.Float64frombits(binary.LittleEndian.Uint64(raw[cursor+8 : cursor+16])),
+			}
+			cursor += 16
+		}
+		polygons[i] = polygon
+	}
+	if cursor != len(raw) {
+		return TextGeoShapeRequest{}, ErrInvalid
+	}
+	return TextGeoShapeRequest{
+		IndexName: indexName,
+		Field:     field,
+		Relation:  relation,
+		Polygons:  polygons,
+		Limit:     limit,
+		Offset:    offset,
+	}, nil
+}
+
+func geoShapeRelationCode(relation string) uint8 {
+	switch relation {
+	case "", "intersects":
+		return 0
+	case "within":
+		return 1
+	case "contains":
+		return 2
+	default:
+		return 0
+	}
+}
+
+func decodeGeoShapeRelation(code byte) (string, bool) {
+	switch code {
+	case 0:
+		return "intersects", true
+	case 1:
+		return "within", true
+	case 2:
+		return "contains", true
+	default:
+		return "", false
+	}
 }
 
 func DecodeTextTermRangeRequest(raw []byte) (TextTermRangeRequest, error) {

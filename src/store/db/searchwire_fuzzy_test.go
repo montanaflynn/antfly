@@ -274,6 +274,22 @@ func TestSearchWireGeoFastPaths(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), polygonTotal)
 	require.Len(t, polygonHits, 2)
+
+	geoShapeBytes := encodeSearchWireTextGeoShapeRequest("full_text_index", "location", "intersects", [][]blevegeo.Point{
+		{
+			{Lon: -122.6, Lat: 37.9},
+			{Lon: -122.2, Lat: 37.9},
+			{Lon: -122.2, Lat: 37.7},
+			{Lon: -122.6, Lat: 37.7},
+			{Lon: -122.6, Lat: 37.9},
+		},
+	}, 10, 0)
+	geoShapeRes, err := db.Search(ctx, geoShapeBytes)
+	require.NoError(t, err)
+	geoShapeTotal, geoShapeHits, err := searchwire.DecodeHits(geoShapeRes, searchWireOpTextGeoShape)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), geoShapeTotal)
+	require.Len(t, geoShapeHits, 2)
 }
 
 func TestSearchWireTermRangeFastPath(t *testing.T) {

@@ -3750,6 +3750,8 @@ func (s *DBImpl) searchWireFastPath(ctx context.Context, encodedRequest []byte, 
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	case searchWireOpTextGeoPolygon:
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextGeoShape:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	case searchWireOpTextTermRange:
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	case searchWireOpTextDocID:
@@ -3933,6 +3935,30 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		q.SetField(polyReq.Field)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(polyReq.Limit), int(polyReq.Offset), false)
 		indexName = polyReq.IndexName
+	case searchWireOpTextGeoShape:
+		shapeReq, decodeErr := decodeSearchWireTextGeoShapeRequest(encodedRequest)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		coordinates := make([][][][]float64, len(shapeReq.Polygons))
+		for i, polygon := range shapeReq.Polygons {
+			ring := make([][]float64, len(polygon))
+			for j, point := range polygon {
+				ring[j] = []float64{point.Lon, point.Lat}
+			}
+			coordinates[i] = [][][]float64{ring}
+		}
+		shapeType := "multipolygon"
+		if len(coordinates) == 1 {
+			shapeType = "polygon"
+		}
+		q, buildErr := query.NewGeoShapeQuery(coordinates, shapeType, shapeReq.Relation)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		q.SetField(shapeReq.Field)
+		bleveReq = bleve.NewSearchRequestOptions(q, int(shapeReq.Limit), int(shapeReq.Offset), false)
+		indexName = shapeReq.IndexName
 	case searchWireOpTextTermRange:
 		rangeReq, decodeErr := decodeSearchWireTextTermRangeRequest(encodedRequest)
 		if decodeErr != nil {

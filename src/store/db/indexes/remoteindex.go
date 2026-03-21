@@ -65,6 +65,7 @@ const (
 	searchWireOpTextGeoDistance  uint16 = searchwire.OpTextGeoDistance
 	searchWireOpTextGeoBBox      uint16 = searchwire.OpTextGeoBBox
 	searchWireOpTextGeoPolygon   uint16 = searchwire.OpTextGeoPolygon
+	searchWireOpTextGeoShape     uint16 = searchwire.OpTextGeoShape
 	searchWireOpTextTermRange    uint16 = searchwire.OpTextTermRange
 	searchWireOpTextDocID        uint16 = searchwire.OpTextDocID
 	searchWireOpTextBoolField    uint16 = searchwire.OpTextBoolField
@@ -1092,6 +1093,12 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 			return nil, 0, false
 		}
 		return searchwire.EncodeTextGeoBoundingPolygonRequest("full_text_index", typed.Field(), typed.Points, uint32(req.Size), uint32(req.From)), searchWireOpTextGeoPolygon, true
+	case *query.GeoShapeQuery:
+		body, ok := encodeGeoShapeSearchWire("full_text_index", typed, uint32(req.Size), uint32(req.From))
+		if !ok {
+			return nil, 0, false
+		}
+		return body, searchWireOpTextGeoShape, true
 	case *query.TermRangeQuery:
 		if typed.Field() == "" {
 			return nil, 0, false
@@ -1228,6 +1235,88 @@ func searchWireMatchPhraseFuzziness(q *query.MatchPhraseQuery) (uint16, bool, bo
 
 func encodeTextSearchWire(op uint16, indexName, field, text string, limit, offset uint32) []byte {
 	return searchwire.EncodeTextRequest(op, indexName, field, text, "", 0, 0, false, 0, limit, offset)
+}
+
+func encodeGeoShapeSearchWire(indexName string, q *query.GeoShapeQuery, limit, offset uint32) ([]byte, bool) {
+	if q == nil || q.Field() == "" || q.Geometry == nil || q.Geometry.Shape == nil {
+		return nil, false
+	}
+
+	relation := q.Geometry.Relation
+	if relation == "" {
+		relation = "intersects"
+	}
+	switch relation {
+	case "intersects", "within", "contains":
+	default:
+		return nil, false
+	}
+
+	raw, err := q.Geometry.Shape.Value()
+	if err != nil {
+		return nil, false
+	}
+	var parsed struct {
+		Type        string          `json:"type"`
+		Coordinates json.RawMessage `json:"coordinates"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, false
+	}
+
+	switch strings.ToLower(parsed.Type) {
+	case "polygon":
+		var coordinates [][][]float64
+		if err := json.Unmarshal(parsed.Coordinates, &coordinates); err != nil || len(coordinates) == 0 {
+			return nil, false
+		}
+		polygon, ok := normalizeSearchWireGeoShapePolygon(coordinates[0])
+		if !ok {
+			return nil, false
+		}
+		return searchwire.EncodeTextGeoShapeRequest(indexName, q.Field(), relation, [][]blevegeo.Point{polygon}, limit, offset), true
+	case "multipolygon":
+		var coordinates [][][][]float64
+		if err := json.Unmarshal(parsed.Coordinates, &coordinates); err != nil || len(coordinates) == 0 {
+			return nil, false
+		}
+		polygons := make([][]blevegeo.Point, 0, len(coordinates))
+		for _, polygonCoords := range coordinates {
+			if len(polygonCoords) == 0 {
+				return nil, false
+			}
+			polygon, ok := normalizeSearchWireGeoShapePolygon(polygonCoords[0])
+			if !ok {
+				return nil, false
+			}
+			polygons = append(polygons, polygon)
+		}
+		return searchwire.EncodeTextGeoShapeRequest(indexName, q.Field(), relation, polygons, limit, offset), true
+	default:
+		return nil, false
+	}
+}
+
+func normalizeSearchWireGeoShapePolygon(coords [][]float64) ([]blevegeo.Point, bool) {
+	if len(coords) < 3 {
+		return nil, false
+	}
+	points := make([]blevegeo.Point, 0, len(coords)+1)
+	for _, coord := range coords {
+		if len(coord) != 2 {
+			return nil, false
+		}
+		points = append(points, blevegeo.Point{Lon: coord[0], Lat: coord[1]})
+	}
+	if len(points) == 0 {
+		return nil, false
+	}
+	first := points[0]
+	last := points[len(points)-1]
+	if first.Lon != last.Lon || first.Lat != last.Lat {
+		points = append(points, first)
+	}
+	return points, true
 }
 
 func encodeSearchWireTextBool(indexName string, must, should, mustNot []searchwire.TextClause, limit, offset uint32) []byte {

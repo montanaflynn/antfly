@@ -34,6 +34,7 @@ const (
 	searchWireOpTextIPRange      uint16 = searchwire.OpTextIPRange
 	searchWireOpTextPhrase       uint16 = searchwire.OpTextPhrase
 	searchWireOpTextMultiPhrase  uint16 = searchwire.OpTextMultiPhrase
+	searchWireOpTextGeoShape     uint16 = searchwire.OpTextGeoShape
 )
 
 type searchWireDenseRequest = searchwire.DenseRequest
@@ -50,6 +51,7 @@ type searchWireTextNumericRangeRequest = searchwire.TextNumericRangeRequest
 type searchWireTextGeoDistanceRequest = searchwire.TextGeoDistanceRequest
 type searchWireTextGeoBoundingBoxRequest = searchwire.TextGeoBoundingBoxRequest
 type searchWireTextGeoBoundingPolygonRequest = searchwire.TextGeoBoundingPolygonRequest
+type searchWireTextGeoShapeRequest = searchwire.TextGeoShapeRequest
 type searchWireTextTermRangeRequest = searchwire.TextTermRangeRequest
 type searchWireTextDocIDRequest = searchwire.TextDocIDRequest
 type searchWireTextBoolFieldRequest = searchwire.TextBoolFieldRequest
@@ -132,6 +134,10 @@ func encodeSearchWireTextGeoBoundingBoxRequest(indexName, field string, topLeftL
 
 func encodeSearchWireTextGeoBoundingPolygonRequest(indexName, field string, points []blevegeo.Point, limit, offset uint32) []byte {
 	return searchwire.EncodeTextGeoBoundingPolygonRequest(indexName, field, points, limit, offset)
+}
+
+func encodeSearchWireTextGeoShapeRequest(indexName, field, relation string, polygons [][]blevegeo.Point, limit, offset uint32) []byte {
+	return searchwire.EncodeTextGeoShapeRequest(indexName, field, relation, polygons, limit, offset)
 }
 
 func encodeSearchWireTextTermRangeRequest(indexName, field, min, max string, inclusiveMin, inclusiveMax *bool, limit, offset uint32) []byte {
@@ -220,6 +226,10 @@ func decodeSearchWireTextGeoBoundingBoxRequest(raw []byte) (searchWireTextGeoBou
 
 func decodeSearchWireTextGeoBoundingPolygonRequest(raw []byte) (searchWireTextGeoBoundingPolygonRequest, error) {
 	return searchwire.DecodeTextGeoBoundingPolygonRequest(raw)
+}
+
+func decodeSearchWireTextGeoShapeRequest(raw []byte) (searchWireTextGeoShapeRequest, error) {
+	return searchwire.DecodeTextGeoShapeRequest(raw)
 }
 
 func decodeSearchWireTextTermRangeRequest(raw []byte) (searchWireTextTermRangeRequest, error) {
