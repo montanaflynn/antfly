@@ -53,6 +53,7 @@ const (
 	searchWireOpTextTerm        uint16 = searchwire.OpTextTerm
 	searchWireOpTextMatchPhrase uint16 = searchwire.OpTextMatchPhrase
 	searchWireOpTextQueryString uint16 = searchwire.OpTextQueryString
+	searchWireOpTextBool        uint16 = searchwire.OpTextBool
 )
 
 type FieldFilter struct {
@@ -986,6 +987,24 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 			return nil, 0, false
 		}
 		return encodeTextSearchWire(searchWireOpTextQueryString, "full_text_index", "", typed.Query, uint32(req.Size), uint32(req.From)), searchWireOpTextQueryString, true
+	case *query.BooleanQuery:
+		if body, ok := encodeBoolTextSearchWire("full_text_index", typed, uint32(req.Size), uint32(req.From)); ok {
+			return body, searchWireOpTextBool, true
+		}
+		return nil, 0, false
+	case *query.ConjunctionQuery:
+		if clauses, ok := encodeSimpleTextClauses(typed.Conjuncts); ok {
+			return encodeSearchWireTextBool("full_text_index", clauses, nil, nil, uint32(req.Size), uint32(req.From)), searchWireOpTextBool, true
+		}
+		return nil, 0, false
+	case *query.DisjunctionQuery:
+		if typed.Min > 1 {
+			return nil, 0, false
+		}
+		if clauses, ok := encodeSimpleTextClauses(typed.Disjuncts); ok {
+			return encodeSearchWireTextBool("full_text_index", nil, clauses, nil, uint32(req.Size), uint32(req.From)), searchWireOpTextBool, true
+		}
+		return nil, 0, false
 	default:
 		return nil, 0, false
 	}
@@ -997,6 +1016,102 @@ func encodeDenseSearchWire(indexName string, vector []float32, k, limit, offset 
 
 func encodeTextSearchWire(op uint16, indexName, field, text string, limit, offset uint32) []byte {
 	return searchwire.EncodeTextRequest(op, indexName, field, text, limit, offset)
+}
+
+func encodeSearchWireTextBool(indexName string, must, should, mustNot []searchwire.TextClause, limit, offset uint32) []byte {
+	return searchwire.EncodeTextBoolRequest(indexName, must, should, mustNot, limit, offset)
+}
+
+func encodeBoolTextSearchWire(indexName string, q *query.BooleanQuery, limit, offset uint32) ([]byte, bool) {
+	if q == nil || q.Filter != nil {
+		return nil, false
+	}
+	must, ok := encodeBooleanMustClauses(q.Must)
+	if !ok {
+		return nil, false
+	}
+	should, ok := encodeBooleanShouldClauses(q.Should)
+	if !ok {
+		return nil, false
+	}
+	mustNot, ok := encodeBooleanShouldClauses(q.MustNot)
+	if !ok {
+		return nil, false
+	}
+	if len(must) == 0 && len(should) == 0 && len(mustNot) == 0 {
+		return nil, false
+	}
+	return encodeSearchWireTextBool(indexName, must, should, mustNot, limit, offset), true
+}
+
+func encodeBooleanMustClauses(q query.Query) ([]searchwire.TextClause, bool) {
+	if q == nil {
+		return nil, true
+	}
+	if typed, ok := q.(*query.ConjunctionQuery); ok {
+		return encodeSimpleTextClauses(typed.Conjuncts)
+	}
+	clause, ok := encodeSimpleTextClause(q)
+	if !ok {
+		return nil, false
+	}
+	return []searchwire.TextClause{clause}, true
+}
+
+func encodeBooleanShouldClauses(q query.Query) ([]searchwire.TextClause, bool) {
+	if q == nil {
+		return nil, true
+	}
+	if typed, ok := q.(*query.DisjunctionQuery); ok {
+		if typed.Min > 1 {
+			return nil, false
+		}
+		return encodeSimpleTextClauses(typed.Disjuncts)
+	}
+	clause, ok := encodeSimpleTextClause(q)
+	if !ok {
+		return nil, false
+	}
+	return []searchwire.TextClause{clause}, true
+}
+
+func encodeSimpleTextClauses(queries []query.Query) ([]searchwire.TextClause, bool) {
+	clauses := make([]searchwire.TextClause, 0, len(queries))
+	for _, q := range queries {
+		clause, ok := encodeSimpleTextClause(q)
+		if !ok {
+			return nil, false
+		}
+		clauses = append(clauses, clause)
+	}
+	return clauses, true
+}
+
+func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
+	switch typed := q.(type) {
+	case *query.MatchQuery:
+		if typed.Field() == "" || typed.Match == "" {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{Op: searchWireOpTextMatch, Field: typed.Field(), Text: typed.Match}, true
+	case *query.TermQuery:
+		if typed.Field() == "" || typed.Term == "" {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{Op: searchWireOpTextTerm, Field: typed.Field(), Text: typed.Term}, true
+	case *query.MatchPhraseQuery:
+		if typed.Field() == "" || typed.MatchPhrase == "" {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{Op: searchWireOpTextMatchPhrase, Field: typed.Field(), Text: typed.MatchPhrase}, true
+	case *query.QueryStringQuery:
+		if typed.Query == "" {
+			return searchwire.TextClause{}, false
+		}
+		return searchwire.TextClause{Op: searchWireOpTextQueryString, Text: typed.Query}, true
+	default:
+		return searchwire.TextClause{}, false
+	}
 }
 
 func decodeDenseSearchResult(indexName string, raw []byte) (*RemoteIndexSearchResult, error) {

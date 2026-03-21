@@ -3725,6 +3725,8 @@ func (s *DBImpl) searchWireFastPath(ctx context.Context, encodedRequest []byte, 
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	case searchWireOpTextQueryString:
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextBool:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	default:
 		return nil, fmt.Errorf("unsupported search wire op: %d", op)
 	}
@@ -3732,9 +3734,10 @@ func (s *DBImpl) searchWireFastPath(ctx context.Context, encodedRequest []byte, 
 
 func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []byte, op uint16) ([]byte, error) {
 	var (
-		textReq  searchWireTextMatchRequest
-		err      error
-		bleveReq *bleve.SearchRequest
+		textReq   searchWireTextMatchRequest
+		err       error
+		bleveReq  *bleve.SearchRequest
+		indexName string
 	)
 	switch op {
 	case searchWireOpTextMatch:
@@ -3743,6 +3746,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 			q := query.NewMatchQuery(textReq.Text)
 			q.SetField(textReq.Field)
 			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
+			indexName = textReq.IndexName
 		}
 	case searchWireOpTextTerm:
 		textReq, err = decodeSearchWireTextTermRequest(encodedRequest)
@@ -3750,6 +3754,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 			q := query.NewTermQuery(textReq.Text)
 			q.SetField(textReq.Field)
 			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
+			indexName = textReq.IndexName
 		}
 	case searchWireOpTextMatchPhrase:
 		textReq, err = decodeSearchWireTextMatchPhraseRequest(encodedRequest)
@@ -3757,19 +3762,32 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 			q := query.NewMatchPhraseQuery(textReq.Text)
 			q.SetField(textReq.Field)
 			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
+			indexName = textReq.IndexName
 		}
 	case searchWireOpTextQueryString:
 		textReq, err = decodeSearchWireTextQueryStringRequest(encodedRequest)
 		if err == nil {
 			bleveReq = bleve.NewSearchRequestOptions(query.NewQueryStringQuery(textReq.Text), int(textReq.Limit), int(textReq.Offset), false)
+			indexName = textReq.IndexName
 		}
+	case searchWireOpTextBool:
+		boolReq, decodeErr := decodeSearchWireTextBoolRequest(encodedRequest)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		boolQuery, buildErr := buildSearchWireBoolQuery(boolReq)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		bleveReq = bleve.NewSearchRequestOptions(boolQuery, int(boolReq.Limit), int(boolReq.Offset), false)
+		indexName = boolReq.IndexName
 	default:
 		return nil, fmt.Errorf("unsupported text wire op: %d", op)
 	}
 	if err != nil {
 		return nil, err
 	}
-	indexName := s.resolveWireSearchIndexName(textReq.IndexName)
+	indexName = s.resolveWireSearchIndexName(indexName)
 	resp, err := s.routeSearch(ctx, indexName, bleveReq, nil)
 	if err != nil {
 		return nil, fmt.Errorf("searching bleve: %w", err)
@@ -3779,6 +3797,58 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		return nil, fmt.Errorf("unexpected response type from bleve search: %T", resp)
 	}
 	return encodeSearchWireBleveResponseForOp(op, result), nil
+}
+
+func buildSearchWireBoolQuery(req searchWireTextBoolRequest) (query.Query, error) {
+	must, err := buildSearchWireClauseQueries(req.Must)
+	if err != nil {
+		return nil, err
+	}
+	should, err := buildSearchWireClauseQueries(req.Should)
+	if err != nil {
+		return nil, err
+	}
+	mustNot, err := buildSearchWireClauseQueries(req.MustNot)
+	if err != nil {
+		return nil, err
+	}
+	if len(must) == 0 && len(should) == 0 && len(mustNot) == 0 {
+		return nil, errSearchWireInvalid
+	}
+	return query.NewBooleanQuery(must, should, mustNot), nil
+}
+
+func buildSearchWireClauseQueries(clauses []searchWireTextClause) ([]query.Query, error) {
+	out := make([]query.Query, 0, len(clauses))
+	for _, clause := range clauses {
+		q, err := buildSearchWireClauseQuery(clause)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, q)
+	}
+	return out, nil
+}
+
+func buildSearchWireClauseQuery(clause searchWireTextClause) (query.Query, error) {
+	switch clause.Op {
+	case searchWireOpTextMatch:
+		q := query.NewMatchQuery(clause.Text)
+		q.SetField(clause.Field)
+		return q, nil
+	case searchWireOpTextTerm:
+		q := query.NewTermQuery(clause.Text)
+		q.SetField(clause.Field)
+		return q, nil
+	case searchWireOpTextMatchPhrase:
+		q := query.NewMatchPhraseQuery(clause.Text)
+		q.SetField(clause.Field)
+		return q, nil
+	case searchWireOpTextQueryString:
+		return query.NewQueryStringQuery(clause.Text), nil
+	default:
+		return nil, errSearchWireInvalid
+	}
 }
 
 func (s *DBImpl) resolveWireSearchIndexName(indexName string) string {

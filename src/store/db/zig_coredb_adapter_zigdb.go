@@ -914,6 +914,21 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 			return nil, err
 		}
 		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextBool:
+		boolReq, err := decodeSearchWireTextBoolRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		boolQuery, err := buildSearchWireBoolQuery(boolReq)
+		if err != nil {
+			return nil, err
+		}
+		bleveReq := bleve.NewSearchRequestOptions(boolQuery, int(boolReq.Limit), int(boolReq.Offset), false)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(boolReq.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
 	default:
 		return nil, zigUnsupported("Search wire op not implemented")
 	}
