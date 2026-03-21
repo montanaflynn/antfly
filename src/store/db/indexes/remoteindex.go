@@ -57,6 +57,7 @@ const (
 	searchWireOpTextPrefix      uint16 = searchwire.OpTextPrefix
 	searchWireOpTextWildcard    uint16 = searchwire.OpTextWildcard
 	searchWireOpTextRegexp      uint16 = searchwire.OpTextRegexp
+	searchWireOpTextFuzzy       uint16 = searchwire.OpTextFuzzy
 )
 
 type FieldFilter struct {
@@ -1005,6 +1006,11 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 			return nil, 0, false
 		}
 		return encodeTextSearchWire(searchWireOpTextRegexp, "full_text_index", typed.Field(), typed.Regexp, uint32(req.Size), uint32(req.From)), searchWireOpTextRegexp, true
+	case *query.FuzzyQuery:
+		if typed.Field() == "" || typed.Term == "" {
+			return nil, 0, false
+		}
+		return searchwire.EncodeTextFuzzyRequest("full_text_index", typed.Field(), typed.Term, uint16(typed.Prefix), uint16(typed.Fuzziness), false, uint32(req.Size), uint32(req.From)), searchWireOpTextFuzzy, true
 	case *query.BooleanQuery:
 		if body, ok := encodeBoolTextSearchWire("full_text_index", typed, uint32(req.Size), uint32(req.From)); ok {
 			return body, searchWireOpTextBool, true

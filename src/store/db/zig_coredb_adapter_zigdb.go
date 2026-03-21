@@ -965,6 +965,25 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 			return nil, err
 		}
 		return encodeSearchWireBleveResponseForOp(op, result), nil
+	case searchWireOpTextFuzzy:
+		req, err := decodeSearchWireTextFuzzyRequest(encodedRequest)
+		if err != nil {
+			return nil, err
+		}
+		q := blevequery.NewFuzzyQuery(req.Text)
+		q.SetField(req.Field)
+		q.SetPrefix(int(req.Prefix))
+		if req.Auto {
+			q.SetAutoFuzziness(true)
+		} else {
+			q.SetFuzziness(int(req.Fuzziness))
+		}
+		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
+		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSearchWireBleveResponseForOp(op, result), nil
 	default:
 		return nil, zigUnsupported("Search wire op not implemented")
 	}

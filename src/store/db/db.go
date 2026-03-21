@@ -3733,6 +3733,8 @@ func (s *DBImpl) searchWireFastPath(ctx context.Context, encodedRequest []byte, 
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	case searchWireOpTextRegexp:
 		return s.searchWireTextFastPath(ctx, encodedRequest, op)
+	case searchWireOpTextFuzzy:
+		return s.searchWireTextFastPath(ctx, encodedRequest, op)
 	default:
 		return nil, fmt.Errorf("unsupported search wire op: %d", op)
 	}
@@ -3811,6 +3813,21 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
 			indexName = textReq.IndexName
 		}
+	case searchWireOpTextFuzzy:
+		fuzzyReq, decodeErr := decodeSearchWireTextFuzzyRequest(encodedRequest)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		q := query.NewFuzzyQuery(fuzzyReq.Text)
+		q.SetField(fuzzyReq.Field)
+		q.SetPrefix(int(fuzzyReq.Prefix))
+		if fuzzyReq.Auto {
+			q.SetAutoFuzziness(true)
+		} else {
+			q.SetFuzziness(int(fuzzyReq.Fuzziness))
+		}
+		bleveReq = bleve.NewSearchRequestOptions(q, int(fuzzyReq.Limit), int(fuzzyReq.Offset), false)
+		indexName = fuzzyReq.IndexName
 	default:
 		return nil, fmt.Errorf("unsupported text wire op: %d", op)
 	}

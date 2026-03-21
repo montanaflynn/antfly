@@ -24,6 +24,7 @@ const (
 	OpTextPrefix      uint16 = 7
 	OpTextWildcard    uint16 = 8
 	OpTextRegexp      uint16 = 9
+	OpTextFuzzy       uint16 = 10
 )
 
 var ErrInvalid = errors.New("invalid search wire payload")
@@ -55,6 +56,17 @@ type TextBoolRequest struct {
 	Must      []TextClause
 	Should    []TextClause
 	MustNot   []TextClause
+	Limit     uint32
+	Offset    uint32
+}
+
+type TextFuzzyRequest struct {
+	IndexName string
+	Field     string
+	Text      string
+	Prefix    uint16
+	Fuzziness uint16
+	Auto      bool
 	Limit     uint32
 	Offset    uint32
 }
@@ -167,6 +179,45 @@ func EncodeTextWildcardRequest(indexName, field, text string, limit, offset uint
 
 func EncodeTextRegexpRequest(indexName, field, text string, limit, offset uint32) []byte {
 	return EncodeTextRequest(OpTextRegexp, indexName, field, text, limit, offset)
+}
+
+func EncodeTextFuzzyRequest(indexName, field, text string, prefix, fuzziness uint16, auto bool, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2 + 1 + 1 + 4
+	out := make([]byte, headerLen+len(indexName)+len(field)+len(text))
+	cursor := 0
+	binary.LittleEndian.PutUint32(out[cursor:], Magic)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], Version)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], OpTextFuzzy)
+	cursor += 2
+	binary.LittleEndian.PutUint32(out[cursor:], 0)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], limit)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], prefix)
+	cursor += 2
+	binary.LittleEndian.PutUint16(out[cursor:], fuzziness)
+	cursor += 2
+	if auto {
+		out[cursor] = 1
+	}
+	cursor += 1
+	cursor += 1 // reserved
+	binary.LittleEndian.PutUint32(out[cursor:], uint32(len(text)))
+	cursor += 4
+	copy(out[cursor:], indexName)
+	cursor += len(indexName)
+	copy(out[cursor:], field)
+	cursor += len(field)
+	copy(out[cursor:], text)
+	return out
 }
 
 func EncodeTextBoolRequest(indexName string, must, should, mustNot []TextClause, limit, offset uint32) []byte {
@@ -305,6 +356,43 @@ func DecodeTextBoolRequest(raw []byte) (TextBoolRequest, error) {
 		Must:      must,
 		Should:    should,
 		MustNot:   mustNot,
+		Limit:     limit,
+		Offset:    offset,
+	}, nil
+}
+
+func DecodeTextFuzzyRequest(raw []byte) (TextFuzzyRequest, error) {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2 + 1 + 1 + 4
+	if len(raw) < headerLen {
+		return TextFuzzyRequest{}, ErrInvalid
+	}
+	if op, ok := Op(raw); !ok || op != OpTextFuzzy {
+		return TextFuzzyRequest{}, ErrInvalid
+	}
+	limit := binary.LittleEndian.Uint32(raw[12:16])
+	offset := binary.LittleEndian.Uint32(raw[16:20])
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
+	prefix := binary.LittleEndian.Uint16(raw[24:26])
+	fuzziness := binary.LittleEndian.Uint16(raw[26:28])
+	auto := raw[28] != 0
+	textLen := int(binary.LittleEndian.Uint32(raw[30:34]))
+	if len(raw) < headerLen+indexNameLen+fieldLen+textLen {
+		return TextFuzzyRequest{}, ErrInvalid
+	}
+	cursor := headerLen
+	indexName := string(raw[cursor : cursor+indexNameLen])
+	cursor += indexNameLen
+	field := string(raw[cursor : cursor+fieldLen])
+	cursor += fieldLen
+	text := string(raw[cursor : cursor+textLen])
+	return TextFuzzyRequest{
+		IndexName: indexName,
+		Field:     field,
+		Text:      text,
+		Prefix:    prefix,
+		Fuzziness: fuzziness,
+		Auto:      auto,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil

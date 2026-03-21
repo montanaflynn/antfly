@@ -19,6 +19,7 @@ const (
 	searchWireOpTextPrefix      uint16 = searchwire.OpTextPrefix
 	searchWireOpTextWildcard    uint16 = searchwire.OpTextWildcard
 	searchWireOpTextRegexp      uint16 = searchwire.OpTextRegexp
+	searchWireOpTextFuzzy       uint16 = searchwire.OpTextFuzzy
 )
 
 type searchWireDenseRequest = searchwire.DenseRequest
@@ -29,6 +30,7 @@ type searchWireTextQueryStringRequest = searchwire.TextRequest
 type searchWireTextPrefixRequest = searchwire.TextRequest
 type searchWireTextWildcardRequest = searchwire.TextRequest
 type searchWireTextRegexpRequest = searchwire.TextRequest
+type searchWireTextFuzzyRequest = searchwire.TextFuzzyRequest
 type searchWireTextClause = searchwire.TextClause
 type searchWireTextBoolRequest = searchwire.TextBoolRequest
 type searchWireHit = searchwire.Hit
@@ -75,6 +77,10 @@ func encodeSearchWireTextRegexpRequest(indexName, field, text string, limit, off
 	return searchwire.EncodeTextRegexpRequest(indexName, field, text, limit, offset)
 }
 
+func encodeSearchWireTextFuzzyRequest(indexName, field, text string, prefix, fuzziness uint16, auto bool, limit, offset uint32) []byte {
+	return searchwire.EncodeTextFuzzyRequest(indexName, field, text, prefix, fuzziness, auto, limit, offset)
+}
+
 func encodeSearchWireTextBoolRequest(indexName string, must, should, mustNot []searchWireTextClause, limit, offset uint32) []byte {
 	return searchwire.EncodeTextBoolRequest(indexName, must, should, mustNot, limit, offset)
 }
@@ -105,6 +111,10 @@ func decodeSearchWireTextWildcardRequest(raw []byte) (searchWireTextWildcardRequ
 
 func decodeSearchWireTextRegexpRequest(raw []byte) (searchWireTextRegexpRequest, error) {
 	return searchwire.DecodeTextRequest(raw, searchwire.OpTextRegexp)
+}
+
+func decodeSearchWireTextFuzzyRequest(raw []byte) (searchWireTextFuzzyRequest, error) {
+	return searchwire.DecodeTextFuzzyRequest(raw)
 }
 
 func decodeSearchWireTextBoolRequest(raw []byte) (searchWireTextBoolRequest, error) {
