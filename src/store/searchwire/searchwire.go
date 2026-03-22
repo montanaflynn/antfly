@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"unsafe"
 
 	"github.com/antflydb/antfly/lib/vectorindex"
 	"github.com/blevesearch/bleve/v2"
@@ -1807,7 +1808,7 @@ func DecodeHits(raw []byte, expectedOp uint16) (uint64, []Hit, error) {
 			return 0, nil, ErrInvalid
 		}
 		hits[i] = Hit{
-			ID:    string(idsBlob[idOffset : idOffset+idLen]),
+			ID:    unsafe.String(unsafe.SliceData(idsBlob[idOffset:idOffset+idLen]), idLen),
 			Score: math.Float32frombits(binary.LittleEndian.Uint32(raw[base+8 : base+12])),
 		}
 	}

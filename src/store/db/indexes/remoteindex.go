@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/antflydb/antfly/lib/reranking"
 	"github.com/antflydb/antfly/lib/schema"
@@ -35,7 +37,6 @@ import (
 	"github.com/antflydb/antfly/lib/vector"
 	"github.com/antflydb/antfly/lib/vectorindex"
 	json "github.com/antflydb/antfly/pkg/libaf/json"
-	"github.com/antflydb/antfly/src/common"
 	"github.com/antflydb/antfly/src/store/searchwire"
 	"github.com/blevesearch/bleve/v2"
 	blevegeo "github.com/blevesearch/bleve/v2/geo"
@@ -84,6 +85,8 @@ type RemoteIndex struct {
 	client *http.Client
 	urls   []string
 	shard  types.ID
+	search string
+	shardS string
 
 	mapping mapping.IndexMapping
 	schema  *schema.TableSchema
@@ -93,10 +96,16 @@ type RemoteIndex struct {
 
 // NewRemoteIndex creates a new client connecting to a remote bleve index
 func NewRemoteIndex(client *http.Client, urls []string, shard types.ID) (*RemoteIndex, error) {
+	searchURL := ""
+	if len(urls) > 0 {
+		searchURL = urls[0] + "/search"
+	}
 	return &RemoteIndex{
 		client: client,
 		urls:   urls,
 		shard:  shard,
+		search: searchURL,
+		shardS: shard.String(),
 	}, nil
 }
 
@@ -147,6 +156,14 @@ type RemoteIndexSearchRequest struct {
 	// Options: "union" (merge all results), "intersection" (only common results), "" (keep separate)
 	ExpandStrategy string `json:"expand_strategy,omitempty"`
 }
+
+type remoteSearchWirePlan struct {
+	contentType string
+	textOp      uint16
+	denseIndex  string
+}
+
+var remoteIndexWireSearchStatus = &bleve.SearchStatus{Total: 1, Successful: 1}
 
 // FusionKeyFullText is the named weight key for the full-text search index.
 const FusionKeyFullText = "full_text"
@@ -677,7 +694,7 @@ func (r *RemoteIndex) RemoteSearch(
 		version = r.schema.Version
 	}
 	req.FullTextIndexVersion = version
-	reqBytes, contentType, decodeWire, ok, err := encodeRemoteSearchRequest(req)
+	reqBytes, plan, ok, err := encodeRemoteSearchRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -686,21 +703,14 @@ func (r *RemoteIndex) RemoteSearch(
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal search request: %w", err)
 		}
-		contentType = "application/json"
+		plan.contentType = "application/json"
 	}
 
 	// FIXME (ajr) Try failing over to other URLs if the first one fails
-	hreq, err := common.NewShardRequest(
-		r.shard,
-		http.MethodPost,
-		r.urls[0]+"/search",
-		bytes.NewReader(reqBytes),
-	)
+	hreq, err := r.newSearchRequest(ctx, bytes.NewReader(reqBytes), plan.contentType)
 	if err != nil {
 		return nil, fmt.Errorf("creating search request: %w", err)
 	}
-	hreq.Header.Set("Content-Type", contentType)
-	hreq = hreq.WithContext(ctx)
 
 	resp, err := r.client.Do(hreq) //nolint:gosec // G704: HTTP client calling configured endpoint
 	if err != nil {
@@ -712,16 +722,15 @@ func (r *RemoteIndex) RemoteSearch(
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("searching error: %s, body: %s", resp.Status, string(bodyBytes))
 	}
-	if contentType == searchWireContentType {
+	if plan.contentType == searchWireContentType {
 		respBytes, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, fmt.Errorf("reading binary search result: %w", err)
 		}
-		result, err := decodeWire(respBytes)
-		if err != nil {
-			return nil, fmt.Errorf("decoding binary search result: %w", err)
+		if plan.denseIndex != "" {
+			return decodeDenseSearchResult(plan.denseIndex, respBytes)
 		}
-		return result, nil
+		return decodeTextSearchResult(plan.textOp, req.BleveSearchRequest, respBytes)
 	}
 	decoder := json.NewDecoder(resp.Body)
 	var result RemoteIndexSearchResult
@@ -763,17 +772,10 @@ func (r *RemoteIndex) BatchRemoteSearch(
 		}
 	}
 
-	hreq, err := common.NewShardRequest(
-		r.shard,
-		http.MethodPost,
-		r.urls[0]+"/search",
-		&buf,
-	)
+	hreq, err := r.newSearchRequest(ctx, &buf, "application/x-ndjson")
 	if err != nil {
 		return nil, []error{fmt.Errorf("creating batch search request: %w", err)}
 	}
-	hreq.Header.Set("Content-Type", "application/x-ndjson")
-	hreq = hreq.WithContext(ctx)
 
 	resp, err := r.client.Do(hreq) //nolint:gosec // G704: HTTP client calling configured endpoint
 	if err != nil {
@@ -897,7 +899,7 @@ func (r *RemoteIndex) SearchInContext(
 			riReq.Columns = r.q.Fields
 		}
 	}
-	reqBytes, contentType, decodeWire, ok, err := encodeRemoteSearchRequest(&riReq)
+	reqBytes, plan, ok, err := encodeRemoteSearchRequest(&riReq)
 	if err != nil {
 		return nil, err
 	}
@@ -906,20 +908,14 @@ func (r *RemoteIndex) SearchInContext(
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal search request: %w", err)
 		}
-		contentType = "application/json"
+		plan.contentType = "application/json"
 	}
 
 	// FIXME (ajr) Try failing over to other URLs if the first one fails
-	hreq, err := common.NewShardRequest(
-		r.shard,
-		http.MethodPost,
-		r.urls[0]+"/search",
-		bytes.NewReader(reqBytes),
-	)
+	hreq, err := r.newSearchRequest(ctx, bytes.NewReader(reqBytes), plan.contentType)
 	if err != nil {
 		return nil, fmt.Errorf("creating search request: %w", err)
 	}
-	hreq.Header.Set("Content-Type", contentType)
 
 	resp, err := r.client.Do(hreq) //nolint:gosec // G704: HTTP client calling configured endpoint
 	if err != nil {
@@ -931,16 +927,23 @@ func (r *RemoteIndex) SearchInContext(
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("searching error: %s, body: %s", resp.Status, string(bodyBytes))
 	}
-	if contentType == searchWireContentType {
+	if plan.contentType == searchWireContentType {
 		respBytes, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, fmt.Errorf("reading binary search result: %w", err)
 		}
-		result, err := decodeWire(respBytes)
+		if plan.denseIndex != "" {
+			result, err := decodeDenseSearchResult(plan.denseIndex, respBytes)
+			if err != nil {
+				return nil, fmt.Errorf("decoding binary search result: %w", err)
+			}
+			return result.BleveSearchResult, nil
+		}
+		result, err := decodeTextSearchBleveResult(plan.textOp, req, respBytes)
 		if err != nil {
 			return nil, fmt.Errorf("decoding binary search result: %w", err)
 		}
-		return result.BleveSearchResult, nil
+		return result, nil
 	}
 	decoder := json.NewDecoder(resp.Body)
 	var result RemoteIndexSearchResult
@@ -951,34 +954,46 @@ func (r *RemoteIndex) SearchInContext(
 	return result.BleveSearchResult, nil
 }
 
-func encodeRemoteSearchRequest(req *RemoteIndexSearchRequest) ([]byte, string, func([]byte) (*RemoteIndexSearchResult, error), bool, error) {
+func encodeRemoteSearchRequest(req *RemoteIndexSearchRequest) ([]byte, remoteSearchWirePlan, bool, error) {
 	if req == nil {
-		return nil, "", nil, false, nil
+		return nil, remoteSearchWirePlan{}, false, nil
 	}
 	if req.Columns != nil || req.CountStar || req.Star || len(req.FilterPrefix) > 0 || len(req.FilterQuery) > 0 ||
 		len(req.AggregationRequests) > 0 || req.RerankerConfig != nil || req.RerankerTemplate != "" ||
 		req.RerankerField != "" || req.RerankerQuery != "" || len(req.GraphSearches) > 0 || req.MergeConfig != nil ||
 		req.ExpandStrategy != "" || len(req.SparseSearches) > 0 {
-		return nil, "", nil, false, nil
+		return nil, remoteSearchWirePlan{}, false, nil
 	}
 	if len(req.VectorSearches) == 1 && req.BleveSearchRequest == nil && len(req.VectorPagingOpts.OrderBy) == 0 &&
 		req.VectorPagingOpts.DistanceOver == nil && req.VectorPagingOpts.DistanceUnder == nil {
 		for indexName, vec := range req.VectorSearches {
 			body := encodeDenseSearchWire(indexName, vec, uint32(req.Limit), uint32(req.Limit), 0)
-			return body, searchWireContentType, func(raw []byte) (*RemoteIndexSearchResult, error) {
-				return decodeDenseSearchResult(indexName, raw)
+			return body, remoteSearchWirePlan{
+				contentType: searchWireContentType,
+				denseIndex:  indexName,
 			}, true, nil
 		}
 	}
 	if req.BleveSearchRequest != nil && len(req.VectorSearches) == 0 &&
 		len(req.BlevePagingOpts.OrderBy) == 0 && len(req.BlevePagingOpts.SearchAfter) == 0 && len(req.BlevePagingOpts.SearchBefore) == 0 {
 		if body, op, ok := encodeSimpleTextSearchWire(req.BleveSearchRequest); ok {
-			return body, searchWireContentType, func(raw []byte) (*RemoteIndexSearchResult, error) {
-				return decodeTextSearchResult(op, req.BleveSearchRequest, raw)
+			return body, remoteSearchWirePlan{
+				contentType: searchWireContentType,
+				textOp:      op,
 			}, true, nil
 		}
 	}
-	return nil, "", nil, false, nil
+	return nil, remoteSearchWirePlan{}, false, nil
+}
+
+func (r *RemoteIndex) newSearchRequest(ctx context.Context, body io.Reader, contentType string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.search, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Raft-Shard-Id", r.shardS)
+	req.Header.Set("Content-Type", contentType)
+	return req, nil
 }
 
 func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool) {
@@ -1757,24 +1772,28 @@ func encodeSimpleTextClause(q query.Query) (searchwire.TextClause, bool) {
 }
 
 func decodeDenseSearchResult(indexName string, raw []byte) (*RemoteIndexSearchResult, error) {
-	totalHits, hits, err := decodeSearchWireHits(raw, searchWireOpDenseKnn)
+	totalHits, hitCount, idsBlob, err := decodeSearchWireResponseHeader(raw, searchWireOpDenseKnn)
 	if err != nil {
 		return nil, err
 	}
 	result := &vectorindex.SearchResult{
-		Hits:  make([]*vectorindex.SearchHit, len(hits)),
+		Hits:  make([]*vectorindex.SearchHit, hitCount),
 		Total: uint64(totalHits),
 		Status: &vectorindex.SearchStatus{
 			Total:      uint64(totalHits),
-			Successful: len(hits),
+			Successful: hitCount,
 		},
 	}
-	for i, hit := range hits {
+	for i := range hitCount {
+		base := searchWireHitsStart + i*searchWireHitLen
+		idOffset := int(binary.LittleEndian.Uint32(raw[base : base+4]))
+		idLen := int(binary.LittleEndian.Uint16(raw[base+4 : base+6]))
+		score := math.Float32frombits(binary.LittleEndian.Uint32(raw[base+8 : base+12]))
 		result.Hits[i] = &vectorindex.SearchHit{
 			Index:    indexName,
-			ID:       hit.id,
-			Distance: hit.score,
-			Score:    hit.score,
+			ID:       unsafe.String(unsafe.SliceData(idsBlob[idOffset:idOffset+idLen]), idLen),
+			Distance: score,
+			Score:    score,
 		}
 	}
 	return &RemoteIndexSearchResult{
@@ -1786,46 +1805,79 @@ func decodeDenseSearchResult(indexName string, raw []byte) (*RemoteIndexSearchRe
 }
 
 func decodeTextSearchResult(op uint16, req *bleve.SearchRequest, raw []byte) (*RemoteIndexSearchResult, error) {
-	totalHits, hits, err := decodeSearchWireHits(raw, op)
+	result, err := decodeTextSearchBleveResult(op, req, raw)
 	if err != nil {
 		return nil, err
 	}
-	docHits := make(search.DocumentMatchCollection, len(hits))
+	return &RemoteIndexSearchResult{
+		Total:             result.Total,
+		BleveSearchResult: result,
+	}, nil
+}
+
+func decodeTextSearchBleveResult(op uint16, req *bleve.SearchRequest, raw []byte) (*bleve.SearchResult, error) {
+	totalHits, hitCount, idsBlob, err := decodeSearchWireResponseHeader(raw, op)
+	if err != nil {
+		return nil, err
+	}
+	docHits := make(search.DocumentMatchCollection, hitCount)
+	docMatchStorage := make([]search.DocumentMatch, hitCount)
 	maxScore := 0.0
-	for i, hit := range hits {
-		score := float64(hit.score)
-		docHits[i] = &search.DocumentMatch{ID: hit.id, Score: score}
+	for i := range hitCount {
+		base := searchWireHitsStart + i*searchWireHitLen
+		idOffset := int(binary.LittleEndian.Uint32(raw[base : base+4]))
+		idLen := int(binary.LittleEndian.Uint16(raw[base+4 : base+6]))
+		score := float64(math.Float32frombits(binary.LittleEndian.Uint32(raw[base+8 : base+12])))
+		docMatchStorage[i] = search.DocumentMatch{
+			ID:    unsafe.String(unsafe.SliceData(idsBlob[idOffset:idOffset+idLen]), idLen),
+			Score: score,
+		}
+		docHits[i] = &docMatchStorage[i]
 		if score > maxScore {
 			maxScore = score
 		}
 	}
-	return &RemoteIndexSearchResult{
-		Total: totalHits,
-		BleveSearchResult: &bleve.SearchResult{
-			Status:   &bleve.SearchStatus{Total: 1, Successful: 1},
-			Request:  req,
-			Hits:     docHits,
-			Total:    totalHits,
-			MaxScore: maxScore,
-		},
+	return &bleve.SearchResult{
+		Status:   remoteIndexWireSearchStatus,
+		Request:  req,
+		Hits:     docHits,
+		Total:    totalHits,
+		MaxScore: maxScore,
 	}, nil
 }
 
-type searchWireDecodedHit struct {
-	id    string
-	score float32
-}
+const (
+	searchWireResponseHeaderLen = 4 + 2 + 2 + 4 + 4 + 4
+	searchWireHitLen            = 4 + 2 + 2 + 4
+	searchWireHitsStart         = searchWireResponseHeaderLen
+)
 
-func decodeSearchWireHits(raw []byte, expectedOp uint16) (uint64, []searchWireDecodedHit, error) {
-	totalHits, decoded, err := searchwire.DecodeHits(raw, expectedOp)
-	if err != nil {
-		return 0, nil, fmt.Errorf("invalid search wire response")
+func decodeSearchWireResponseHeader(raw []byte, expectedOp uint16) (uint64, int, []byte, error) {
+	if len(raw) < searchWireResponseHeaderLen {
+		return 0, 0, nil, fmt.Errorf("invalid search wire response")
 	}
-	hits := make([]searchWireDecodedHit, len(decoded))
-	for i, hit := range decoded {
-		hits[i] = searchWireDecodedHit{id: hit.ID, score: hit.Score}
+	if binary.LittleEndian.Uint32(raw[0:4]) != searchWireMagic ||
+		binary.LittleEndian.Uint16(raw[4:6]) != searchWireVersion ||
+		binary.LittleEndian.Uint16(raw[6:8]) != expectedOp {
+		return 0, 0, nil, fmt.Errorf("invalid search wire response")
 	}
-	return totalHits, hits, nil
+	totalHits := binary.LittleEndian.Uint32(raw[8:12])
+	hitCount := int(binary.LittleEndian.Uint32(raw[12:16]))
+	idsLen := int(binary.LittleEndian.Uint32(raw[16:20]))
+	idsStart := searchWireResponseHeaderLen + hitCount*searchWireHitLen
+	if len(raw) < idsStart+idsLen {
+		return 0, 0, nil, fmt.Errorf("invalid search wire response")
+	}
+	idsBlob := raw[idsStart : idsStart+idsLen]
+	for i := range hitCount {
+		base := searchWireHitsStart + i*searchWireHitLen
+		idOffset := int(binary.LittleEndian.Uint32(raw[base : base+4]))
+		idLen := int(binary.LittleEndian.Uint16(raw[base+4 : base+6]))
+		if idOffset < 0 || idOffset+idLen > len(idsBlob) {
+			return 0, 0, nil, fmt.Errorf("invalid search wire response")
+		}
+	}
+	return uint64(totalHits), hitCount, idsBlob, nil
 }
 
 func (r *RemoteIndex) IndexSynonym(
