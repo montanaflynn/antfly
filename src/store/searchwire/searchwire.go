@@ -61,6 +61,7 @@ type TextRequest struct {
 	Fuzziness uint16
 	Auto      bool
 	Operator  uint8
+	Boost     float32
 	Limit     uint32
 	Offset    uint32
 }
@@ -122,6 +123,7 @@ type TextFuzzyRequest struct {
 	Prefix    uint16
 	Fuzziness uint16
 	Auto      bool
+	Boost     float32
 	Limit     uint32
 	Offset    uint32
 }
@@ -134,6 +136,7 @@ type TextDateRangeRequest struct {
 	InclusiveStart *bool
 	InclusiveEnd   *bool
 	DateTimeParser string
+	Boost          float32
 	Limit          uint32
 	Offset         uint32
 }
@@ -145,6 +148,7 @@ type TextNumericRangeRequest struct {
 	Max          *float64
 	InclusiveMin *bool
 	InclusiveMax *bool
+	Boost        float32
 	Limit        uint32
 	Offset       uint32
 }
@@ -155,6 +159,7 @@ type TextGeoDistanceRequest struct {
 	Lon       float64
 	Lat       float64
 	Distance  string
+	Boost     float32
 	Limit     uint32
 	Offset    uint32
 }
@@ -166,6 +171,7 @@ type TextGeoBoundingBoxRequest struct {
 	TopLeftLat     float64
 	BottomRightLon float64
 	BottomRightLat float64
+	Boost          float32
 	Limit          uint32
 	Offset         uint32
 }
@@ -174,6 +180,7 @@ type TextGeoBoundingPolygonRequest struct {
 	IndexName string
 	Field     string
 	Points    []blevegeo.Point
+	Boost     float32
 	Limit     uint32
 	Offset    uint32
 }
@@ -183,6 +190,7 @@ type TextGeoShapeRequest struct {
 	Field     string
 	Relation  string
 	Polygons  [][]blevegeo.Point
+	Boost     float32
 	Limit     uint32
 	Offset    uint32
 }
@@ -194,12 +202,14 @@ type TextTermRangeRequest struct {
 	Max          string
 	InclusiveMin *bool
 	InclusiveMax *bool
+	Boost        float32
 	Limit        uint32
 	Offset       uint32
 }
 
 type TextDocIDRequest struct {
 	IDs    []string
+	Boost  float32
 	Limit  uint32
 	Offset uint32
 }
@@ -208,6 +218,7 @@ type TextBoolFieldRequest struct {
 	IndexName string
 	Field     string
 	Value     bool
+	Boost     float32
 	Limit     uint32
 	Offset    uint32
 }
@@ -216,6 +227,7 @@ type TextIPRangeRequest struct {
 	IndexName string
 	Field     string
 	CIDR      string
+	Boost     float32
 	Limit     uint32
 	Offset    uint32
 }
@@ -226,6 +238,7 @@ type TextPhraseRequest struct {
 	Terms     []string
 	Fuzziness uint16
 	Auto      bool
+	Boost     float32
 	Limit     uint32
 	Offset    uint32
 }
@@ -236,6 +249,7 @@ type TextMultiPhraseRequest struct {
 	Terms     [][]string
 	Fuzziness uint16
 	Auto      bool
+	Boost     float32
 	Limit     uint32
 	Offset    uint32
 }
@@ -322,36 +336,36 @@ func DecodeDenseRequest(raw []byte) (DenseRequest, error) {
 	}, nil
 }
 
-func EncodeTextMatchRequest(indexName, field, text, analyzer string, prefix, fuzziness uint16, auto bool, operator uint8, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextMatch, indexName, field, text, analyzer, prefix, fuzziness, auto, operator, limit, offset)
+func EncodeTextMatchRequest(indexName, field, text, analyzer string, prefix, fuzziness uint16, auto bool, operator uint8, boost float32, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextMatch, indexName, field, text, analyzer, prefix, fuzziness, auto, operator, boost, limit, offset)
 }
 
-func EncodeTextTermRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextTerm, indexName, field, text, "", 0, 0, false, 0, limit, offset)
+func EncodeTextTermRequest(indexName, field, text string, boost float32, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextTerm, indexName, field, text, "", 0, 0, false, 0, boost, limit, offset)
 }
 
-func EncodeTextMatchPhraseRequest(indexName, field, text, analyzer string, fuzziness uint16, auto bool, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextMatchPhrase, indexName, field, text, analyzer, 0, fuzziness, auto, 0, limit, offset)
+func EncodeTextMatchPhraseRequest(indexName, field, text, analyzer string, fuzziness uint16, auto bool, boost float32, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextMatchPhrase, indexName, field, text, analyzer, 0, fuzziness, auto, 0, boost, limit, offset)
 }
 
-func EncodeTextQueryStringRequest(indexName, text string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextQueryString, indexName, "", text, "", 0, 0, false, 0, limit, offset)
+func EncodeTextQueryStringRequest(indexName, text string, boost float32, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextQueryString, indexName, "", text, "", 0, 0, false, 0, boost, limit, offset)
 }
 
-func EncodeTextPrefixRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextPrefix, indexName, field, text, "", 0, 0, false, 0, limit, offset)
+func EncodeTextPrefixRequest(indexName, field, text string, boost float32, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextPrefix, indexName, field, text, "", 0, 0, false, 0, boost, limit, offset)
 }
 
-func EncodeTextWildcardRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextWildcard, indexName, field, text, "", 0, 0, false, 0, limit, offset)
+func EncodeTextWildcardRequest(indexName, field, text string, boost float32, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextWildcard, indexName, field, text, "", 0, 0, false, 0, boost, limit, offset)
 }
 
-func EncodeTextRegexpRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextRegexp, indexName, field, text, "", 0, 0, false, 0, limit, offset)
+func EncodeTextRegexpRequest(indexName, field, text string, boost float32, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextRegexp, indexName, field, text, "", 0, 0, false, 0, boost, limit, offset)
 }
 
-func EncodeTextFuzzyRequest(indexName, field, text string, prefix, fuzziness uint16, auto bool, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2 + 1 + 1 + 4
+func EncodeTextFuzzyRequest(indexName, field, text string, prefix, fuzziness uint16, auto bool, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 2 + 2 + 1 + 1 + 4
 	out := make([]byte, headerLen+len(indexName)+len(field)+len(text))
 	cursor := 0
 	binary.LittleEndian.PutUint32(out[cursor:], Magic)
@@ -365,6 +379,8 @@ func EncodeTextFuzzyRequest(indexName, field, text string, prefix, fuzziness uin
 	binary.LittleEndian.PutUint32(out[cursor:], limit)
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
 	cursor += 4
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
 	cursor += 2
@@ -389,16 +405,16 @@ func EncodeTextFuzzyRequest(indexName, field, text string, prefix, fuzziness uin
 	return out
 }
 
-func EncodeTextMatchAllRequest(indexName string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextMatchAll, indexName, "", "", "", 0, 0, false, 0, limit, offset)
+func EncodeTextMatchAllRequest(indexName string, boost float32, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextMatchAll, indexName, "", "", "", 0, 0, false, 0, boost, limit, offset)
 }
 
-func EncodeTextMatchNoneRequest(indexName string, limit, offset uint32) []byte {
-	return EncodeTextRequest(OpTextMatchNone, indexName, "", "", "", 0, 0, false, 0, limit, offset)
+func EncodeTextMatchNoneRequest(indexName string, boost float32, limit, offset uint32) []byte {
+	return EncodeTextRequest(OpTextMatchNone, indexName, "", "", "", 0, 0, false, 0, boost, limit, offset)
 }
 
-func EncodeTextDateRangeRequest(indexName, field, start, end string, inclusiveStart, inclusiveEnd *bool, parser string, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 4 + 2
+func EncodeTextDateRangeRequest(indexName, field, start, end string, inclusiveStart, inclusiveEnd *bool, parser string, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 4 + 4 + 2
 	out := make([]byte, headerLen+len(indexName)+len(field)+len(start)+len(end)+len(parser))
 	cursor := 0
 	binary.LittleEndian.PutUint32(out[cursor:], Magic)
@@ -426,6 +442,8 @@ func EncodeTextDateRangeRequest(indexName, field, start, end string, inclusiveSt
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], offset)
 	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
+	cursor += 4
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
 	cursor += 2
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
@@ -448,8 +466,8 @@ func EncodeTextDateRangeRequest(indexName, field, start, end string, inclusiveSt
 	return out
 }
 
-func EncodeTextNumericRangeRequest(indexName, field string, min, max *float64, inclusiveMin, inclusiveMax *bool, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 8 + 8 + 2 + 2
+func EncodeTextNumericRangeRequest(indexName, field string, min, max *float64, inclusiveMin, inclusiveMax *bool, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 8 + 8 + 2 + 2
 	out := make([]byte, headerLen+len(indexName)+len(field))
 	cursor := 0
 	binary.LittleEndian.PutUint32(out[cursor:], Magic)
@@ -485,6 +503,8 @@ func EncodeTextNumericRangeRequest(indexName, field string, min, max *float64, i
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], offset)
 	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
+	cursor += 4
 	cursor += 8 // min
 	cursor += 8 // max
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
@@ -497,8 +517,8 @@ func EncodeTextNumericRangeRequest(indexName, field string, min, max *float64, i
 	return out
 }
 
-func EncodeTextGeoDistanceRequest(indexName, field string, lon, lat float64, distance string, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 8 + 8 + 2 + 2 + 4
+func EncodeTextGeoDistanceRequest(indexName, field string, lon, lat float64, distance string, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 8 + 8 + 2 + 2 + 4
 	out := make([]byte, headerLen+len(indexName)+len(field)+len(distance))
 	cursor := 0
 	binary.LittleEndian.PutUint32(out[cursor:], Magic)
@@ -512,6 +532,8 @@ func EncodeTextGeoDistanceRequest(indexName, field string, lon, lat float64, dis
 	binary.LittleEndian.PutUint32(out[cursor:], limit)
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
 	cursor += 4
 	binary.LittleEndian.PutUint64(out[cursor:], math.Float64bits(lon))
 	cursor += 8
@@ -531,8 +553,8 @@ func EncodeTextGeoDistanceRequest(indexName, field string, lon, lat float64, dis
 	return out
 }
 
-func EncodeTextGeoBoundingBoxRequest(indexName, field string, topLeftLon, topLeftLat, bottomRightLon, bottomRightLat float64, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 8 + 8 + 8 + 8 + 2 + 2
+func EncodeTextGeoBoundingBoxRequest(indexName, field string, topLeftLon, topLeftLat, bottomRightLon, bottomRightLat float64, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 8 + 8 + 8 + 8 + 2 + 2
 	out := make([]byte, headerLen+len(indexName)+len(field))
 	cursor := 0
 	binary.LittleEndian.PutUint32(out[cursor:], Magic)
@@ -546,6 +568,8 @@ func EncodeTextGeoBoundingBoxRequest(indexName, field string, topLeftLon, topLef
 	binary.LittleEndian.PutUint32(out[cursor:], limit)
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
 	cursor += 4
 	binary.LittleEndian.PutUint64(out[cursor:], math.Float64bits(topLeftLon))
 	cursor += 8
@@ -565,8 +589,8 @@ func EncodeTextGeoBoundingBoxRequest(indexName, field string, topLeftLon, topLef
 	return out
 }
 
-func EncodeTextGeoBoundingPolygonRequest(indexName, field string, points []blevegeo.Point, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2
+func EncodeTextGeoBoundingPolygonRequest(indexName, field string, points []blevegeo.Point, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 2
 	out := make([]byte, headerLen+len(indexName)+len(field)+len(points)*16)
 	cursor := 0
 	binary.LittleEndian.PutUint32(out[cursor:], Magic)
@@ -580,6 +604,8 @@ func EncodeTextGeoBoundingPolygonRequest(indexName, field string, points []bleve
 	binary.LittleEndian.PutUint32(out[cursor:], limit)
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
 	cursor += 4
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
 	cursor += 2
@@ -600,8 +626,8 @@ func EncodeTextGeoBoundingPolygonRequest(indexName, field string, points []bleve
 	return out
 }
 
-func EncodeTextGeoShapeRequest(indexName, field, relation string, polygons [][]blevegeo.Point, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 1 + 1
+func EncodeTextGeoShapeRequest(indexName, field, relation string, polygons [][]blevegeo.Point, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 2 + 1 + 1
 	pointsLen := 0
 	for _, polygon := range polygons {
 		pointsLen += 2 + len(polygon)*16
@@ -619,6 +645,8 @@ func EncodeTextGeoShapeRequest(indexName, field, relation string, polygons [][]b
 	binary.LittleEndian.PutUint32(out[cursor:], limit)
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
 	cursor += 4
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
 	cursor += 2
@@ -646,8 +674,8 @@ func EncodeTextGeoShapeRequest(indexName, field, relation string, polygons [][]b
 	return out
 }
 
-func EncodeTextTermRangeRequest(indexName, field, min, max string, inclusiveMin, inclusiveMax *bool, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 4
+func EncodeTextTermRangeRequest(indexName, field, min, max string, inclusiveMin, inclusiveMax *bool, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 4 + 4
 	out := make([]byte, headerLen+len(indexName)+len(field)+len(min)+len(max))
 	cursor := 0
 	binary.LittleEndian.PutUint32(out[cursor:], Magic)
@@ -675,6 +703,8 @@ func EncodeTextTermRangeRequest(indexName, field, min, max string, inclusiveMin,
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], offset)
 	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
+	cursor += 4
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
 	cursor += 2
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
@@ -693,8 +723,8 @@ func EncodeTextTermRangeRequest(indexName, field, min, max string, inclusiveMin,
 	return out
 }
 
-func EncodeTextDocIDRequest(ids []string, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2
+func EncodeTextDocIDRequest(ids []string, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2
 	totalIDsLen := 0
 	for _, id := range ids {
 		totalIDsLen += 2 + len(id)
@@ -713,6 +743,8 @@ func EncodeTextDocIDRequest(ids []string, limit, offset uint32) []byte {
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], offset)
 	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
+	cursor += 4
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(ids)))
 	cursor += 2
 	for _, id := range ids {
@@ -724,8 +756,8 @@ func EncodeTextDocIDRequest(ids []string, limit, offset uint32) []byte {
 	return out
 }
 
-func EncodeTextBoolFieldRequest(indexName, field string, value bool, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 1 + 1
+func EncodeTextBoolFieldRequest(indexName, field string, value bool, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 1 + 1
 	out := make([]byte, headerLen+len(indexName)+len(field))
 	cursor := 0
 	binary.LittleEndian.PutUint32(out[cursor:], Magic)
@@ -739,6 +771,8 @@ func EncodeTextBoolFieldRequest(indexName, field string, value bool, limit, offs
 	binary.LittleEndian.PutUint32(out[cursor:], limit)
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
 	cursor += 4
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
 	cursor += 2
@@ -755,8 +789,8 @@ func EncodeTextBoolFieldRequest(indexName, field string, value bool, limit, offs
 	return out
 }
 
-func EncodeTextIPRangeRequest(indexName, field, cidr string, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4
+func EncodeTextIPRangeRequest(indexName, field, cidr string, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 4
 	out := make([]byte, headerLen+len(indexName)+len(field)+len(cidr))
 	cursor := 0
 	binary.LittleEndian.PutUint32(out[cursor:], Magic)
@@ -770,6 +804,8 @@ func EncodeTextIPRangeRequest(indexName, field, cidr string, limit, offset uint3
 	binary.LittleEndian.PutUint32(out[cursor:], limit)
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
 	cursor += 4
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
 	cursor += 2
@@ -785,8 +821,8 @@ func EncodeTextIPRangeRequest(indexName, field, cidr string, limit, offset uint3
 	return out
 }
 
-func EncodeTextPhraseRequest(indexName, field string, terms []string, fuzziness uint16, auto bool, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2
+func EncodeTextPhraseRequest(indexName, field string, terms []string, fuzziness uint16, auto bool, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 2 + 2
 	totalTermsLen := 0
 	for _, term := range terms {
 		totalTermsLen += 2 + len(term)
@@ -809,6 +845,8 @@ func EncodeTextPhraseRequest(indexName, field string, terms []string, fuzziness 
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], offset)
 	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
+	cursor += 4
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
 	cursor += 2
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(field)))
@@ -830,8 +868,8 @@ func EncodeTextPhraseRequest(indexName, field string, terms []string, fuzziness 
 	return out
 }
 
-func EncodeTextMultiPhraseRequest(indexName, field string, terms [][]string, fuzziness uint16, auto bool, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2
+func EncodeTextMultiPhraseRequest(indexName, field string, terms [][]string, fuzziness uint16, auto bool, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 2 + 2
 	totalTermsLen := 0
 	for _, group := range terms {
 		totalTermsLen += 2
@@ -856,6 +894,8 @@ func EncodeTextMultiPhraseRequest(indexName, field string, terms [][]string, fuz
 	binary.LittleEndian.PutUint32(out[cursor:], limit)
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
 	cursor += 4
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
 	cursor += 2
@@ -922,8 +962,8 @@ func EncodeTextBoolRequest(indexName string, must, should, mustNot, filter []Tex
 	return out
 }
 
-func EncodeTextRequest(op uint16, indexName, field, text, analyzer string, prefix, fuzziness uint16, auto bool, operator uint8, limit, offset uint32) []byte {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 2 + 1 + 1
+func EncodeTextRequest(op uint16, indexName, field, text, analyzer string, prefix, fuzziness uint16, auto bool, operator uint8, boost float32, limit, offset uint32) []byte {
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 2 + 1 + 1
 	out := make([]byte, headerLen+len(indexName)+len(field)+len(text)+len(analyzer))
 	cursor := 0
 	binary.LittleEndian.PutUint32(out[cursor:], Magic)
@@ -941,6 +981,8 @@ func EncodeTextRequest(op uint16, indexName, field, text, analyzer string, prefi
 	binary.LittleEndian.PutUint32(out[cursor:], limit)
 	cursor += 4
 	binary.LittleEndian.PutUint32(out[cursor:], offset)
+	cursor += 4
+	binary.LittleEndian.PutUint32(out[cursor:], math.Float32bits(boost))
 	cursor += 4
 	binary.LittleEndian.PutUint16(out[cursor:], uint16(len(indexName)))
 	cursor += 2
@@ -968,7 +1010,7 @@ func EncodeTextRequest(op uint16, indexName, field, text, analyzer string, prefi
 }
 
 func DecodeTextRequest(raw []byte, opExpected uint16) (TextRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 2 + 1 + 1
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 4 + 2 + 2 + 2 + 1 + 1
 	if len(raw) < headerLen {
 		return TextRequest{}, ErrInvalid
 	}
@@ -978,13 +1020,14 @@ func DecodeTextRequest(raw []byte, opExpected uint16) (TextRequest, error) {
 	flags := binary.LittleEndian.Uint32(raw[8:12])
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
-	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
-	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
-	textLen := int(binary.LittleEndian.Uint32(raw[24:28]))
-	analyzerLen := int(binary.LittleEndian.Uint16(raw[28:30]))
-	prefix := binary.LittleEndian.Uint16(raw[30:32])
-	fuzziness := binary.LittleEndian.Uint16(raw[32:34])
-	operator := raw[34]
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[20:24]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[24:26]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[26:28]))
+	textLen := int(binary.LittleEndian.Uint32(raw[28:32]))
+	analyzerLen := int(binary.LittleEndian.Uint16(raw[32:34]))
+	prefix := binary.LittleEndian.Uint16(raw[34:36])
+	fuzziness := binary.LittleEndian.Uint16(raw[36:38])
+	operator := raw[38]
 	if len(raw) < headerLen+indexNameLen+fieldLen+textLen+analyzerLen {
 		return TextRequest{}, ErrInvalid
 	}
@@ -1005,6 +1048,7 @@ func DecodeTextRequest(raw []byte, opExpected uint16) (TextRequest, error) {
 		Fuzziness: fuzziness,
 		Auto:      flags&1 != 0,
 		Operator:  operator,
+		Boost:     boost,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil
@@ -1069,7 +1113,7 @@ func DecodeTextBoolRequest(raw []byte) (TextBoolRequest, error) {
 }
 
 func DecodeTextFuzzyRequest(raw []byte) (TextFuzzyRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2 + 1 + 1 + 4
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 2 + 2 + 1 + 1 + 4
 	if len(raw) < headerLen {
 		return TextFuzzyRequest{}, ErrInvalid
 	}
@@ -1078,12 +1122,13 @@ func DecodeTextFuzzyRequest(raw []byte) (TextFuzzyRequest, error) {
 	}
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
-	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
-	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
-	prefix := binary.LittleEndian.Uint16(raw[24:26])
-	fuzziness := binary.LittleEndian.Uint16(raw[26:28])
-	auto := raw[28] != 0
-	textLen := int(binary.LittleEndian.Uint32(raw[30:34]))
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[20:24]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[24:26]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[26:28]))
+	prefix := binary.LittleEndian.Uint16(raw[28:30])
+	fuzziness := binary.LittleEndian.Uint16(raw[30:32])
+	auto := raw[32] != 0
+	textLen := int(binary.LittleEndian.Uint32(raw[34:38]))
 	if len(raw) < headerLen+indexNameLen+fieldLen+textLen {
 		return TextFuzzyRequest{}, ErrInvalid
 	}
@@ -1100,13 +1145,14 @@ func DecodeTextFuzzyRequest(raw []byte) (TextFuzzyRequest, error) {
 		Prefix:    prefix,
 		Fuzziness: fuzziness,
 		Auto:      auto,
+		Boost:     boost,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil
 }
 
 func DecodeTextDateRangeRequest(raw []byte) (TextDateRangeRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 4 + 2
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 4 + 4 + 2
 	if len(raw) < headerLen {
 		return TextDateRangeRequest{}, ErrInvalid
 	}
@@ -1116,11 +1162,12 @@ func DecodeTextDateRangeRequest(raw []byte) (TextDateRangeRequest, error) {
 	flags := binary.LittleEndian.Uint32(raw[8:12])
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
-	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
-	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
-	startLen := int(binary.LittleEndian.Uint32(raw[24:28]))
-	endLen := int(binary.LittleEndian.Uint32(raw[28:32]))
-	parserLen := int(binary.LittleEndian.Uint16(raw[32:34]))
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[20:24]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[24:26]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[26:28]))
+	startLen := int(binary.LittleEndian.Uint32(raw[28:32]))
+	endLen := int(binary.LittleEndian.Uint32(raw[32:36]))
+	parserLen := int(binary.LittleEndian.Uint16(raw[36:38]))
 	if len(raw) < headerLen+indexNameLen+fieldLen+startLen+endLen+parserLen {
 		return TextDateRangeRequest{}, ErrInvalid
 	}
@@ -1152,13 +1199,14 @@ func DecodeTextDateRangeRequest(raw []byte) (TextDateRangeRequest, error) {
 		InclusiveStart: inclusiveStart,
 		InclusiveEnd:   inclusiveEnd,
 		DateTimeParser: parser,
+		Boost:          boost,
 		Limit:          limit,
 		Offset:         offset,
 	}, nil
 }
 
 func DecodeTextNumericRangeRequest(raw []byte) (TextNumericRangeRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 8 + 8 + 2 + 2
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 8 + 8 + 2 + 2
 	if len(raw) < headerLen {
 		return TextNumericRangeRequest{}, ErrInvalid
 	}
@@ -1168,18 +1216,19 @@ func DecodeTextNumericRangeRequest(raw []byte) (TextNumericRangeRequest, error) 
 	flags := binary.LittleEndian.Uint32(raw[8:12])
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[20:24]))
 	var min *float64
 	var max *float64
 	if flags&(1<<0) != 0 {
-		value := math.Float64frombits(binary.LittleEndian.Uint64(raw[20:28]))
+		value := math.Float64frombits(binary.LittleEndian.Uint64(raw[24:32]))
 		min = &value
 	}
 	if flags&(1<<1) != 0 {
-		value := math.Float64frombits(binary.LittleEndian.Uint64(raw[28:36]))
+		value := math.Float64frombits(binary.LittleEndian.Uint64(raw[32:40]))
 		max = &value
 	}
-	indexNameLen := int(binary.LittleEndian.Uint16(raw[36:38]))
-	fieldLen := int(binary.LittleEndian.Uint16(raw[38:40]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[40:42]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[42:44]))
 	if len(raw) < headerLen+indexNameLen+fieldLen {
 		return TextNumericRangeRequest{}, ErrInvalid
 	}
@@ -1204,13 +1253,14 @@ func DecodeTextNumericRangeRequest(raw []byte) (TextNumericRangeRequest, error) 
 		Max:          max,
 		InclusiveMin: inclusiveMin,
 		InclusiveMax: inclusiveMax,
+		Boost:        boost,
 		Limit:        limit,
 		Offset:       offset,
 	}, nil
 }
 
 func DecodeTextGeoDistanceRequest(raw []byte) (TextGeoDistanceRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 8 + 8 + 2 + 2 + 4
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 8 + 8 + 2 + 2 + 4
 	if len(raw) < headerLen {
 		return TextGeoDistanceRequest{}, ErrInvalid
 	}
@@ -1219,11 +1269,12 @@ func DecodeTextGeoDistanceRequest(raw []byte) (TextGeoDistanceRequest, error) {
 	}
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
-	lon := math.Float64frombits(binary.LittleEndian.Uint64(raw[20:28]))
-	lat := math.Float64frombits(binary.LittleEndian.Uint64(raw[28:36]))
-	indexNameLen := int(binary.LittleEndian.Uint16(raw[36:38]))
-	fieldLen := int(binary.LittleEndian.Uint16(raw[38:40]))
-	distanceLen := int(binary.LittleEndian.Uint32(raw[40:44]))
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[20:24]))
+	lon := math.Float64frombits(binary.LittleEndian.Uint64(raw[24:32]))
+	lat := math.Float64frombits(binary.LittleEndian.Uint64(raw[32:40]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[40:42]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[42:44]))
+	distanceLen := int(binary.LittleEndian.Uint32(raw[44:48]))
 	if len(raw) < headerLen+indexNameLen+fieldLen+distanceLen {
 		return TextGeoDistanceRequest{}, ErrInvalid
 	}
@@ -1239,13 +1290,14 @@ func DecodeTextGeoDistanceRequest(raw []byte) (TextGeoDistanceRequest, error) {
 		Lon:       lon,
 		Lat:       lat,
 		Distance:  distance,
+		Boost:     boost,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil
 }
 
 func DecodeTextGeoBoundingBoxRequest(raw []byte) (TextGeoBoundingBoxRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 8 + 8 + 8 + 8 + 2 + 2
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 8 + 8 + 8 + 8 + 2 + 2
 	if len(raw) < headerLen {
 		return TextGeoBoundingBoxRequest{}, ErrInvalid
 	}
@@ -1254,12 +1306,13 @@ func DecodeTextGeoBoundingBoxRequest(raw []byte) (TextGeoBoundingBoxRequest, err
 	}
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
-	topLeftLon := math.Float64frombits(binary.LittleEndian.Uint64(raw[20:28]))
-	topLeftLat := math.Float64frombits(binary.LittleEndian.Uint64(raw[28:36]))
-	bottomRightLon := math.Float64frombits(binary.LittleEndian.Uint64(raw[36:44]))
-	bottomRightLat := math.Float64frombits(binary.LittleEndian.Uint64(raw[44:52]))
-	indexNameLen := int(binary.LittleEndian.Uint16(raw[52:54]))
-	fieldLen := int(binary.LittleEndian.Uint16(raw[54:56]))
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[20:24]))
+	topLeftLon := math.Float64frombits(binary.LittleEndian.Uint64(raw[24:32]))
+	topLeftLat := math.Float64frombits(binary.LittleEndian.Uint64(raw[32:40]))
+	bottomRightLon := math.Float64frombits(binary.LittleEndian.Uint64(raw[40:48]))
+	bottomRightLat := math.Float64frombits(binary.LittleEndian.Uint64(raw[48:56]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[56:58]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[58:60]))
 	if len(raw) < headerLen+indexNameLen+fieldLen {
 		return TextGeoBoundingBoxRequest{}, ErrInvalid
 	}
@@ -1274,13 +1327,14 @@ func DecodeTextGeoBoundingBoxRequest(raw []byte) (TextGeoBoundingBoxRequest, err
 		TopLeftLat:     topLeftLat,
 		BottomRightLon: bottomRightLon,
 		BottomRightLat: bottomRightLat,
+		Boost:          boost,
 		Limit:          limit,
 		Offset:         offset,
 	}, nil
 }
 
 func DecodeTextGeoBoundingPolygonRequest(raw []byte) (TextGeoBoundingPolygonRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 2
 	if len(raw) < headerLen {
 		return TextGeoBoundingPolygonRequest{}, ErrInvalid
 	}
@@ -1289,9 +1343,10 @@ func DecodeTextGeoBoundingPolygonRequest(raw []byte) (TextGeoBoundingPolygonRequ
 	}
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
-	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
-	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
-	pointCount := int(binary.LittleEndian.Uint16(raw[24:26]))
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[20:24]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[24:26]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[26:28]))
+	pointCount := int(binary.LittleEndian.Uint16(raw[28:30]))
 	if len(raw) < headerLen+indexNameLen+fieldLen+pointCount*16 {
 		return TextGeoBoundingPolygonRequest{}, ErrInvalid
 	}
@@ -1312,13 +1367,14 @@ func DecodeTextGeoBoundingPolygonRequest(raw []byte) (TextGeoBoundingPolygonRequ
 		IndexName: indexName,
 		Field:     field,
 		Points:    points,
+		Boost:     boost,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil
 }
 
 func DecodeTextGeoShapeRequest(raw []byte) (TextGeoShapeRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 1 + 1
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 2 + 1 + 1
 	if len(raw) < headerLen {
 		return TextGeoShapeRequest{}, ErrInvalid
 	}
@@ -1327,10 +1383,11 @@ func DecodeTextGeoShapeRequest(raw []byte) (TextGeoShapeRequest, error) {
 	}
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
-	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
-	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
-	polygonCount := int(binary.LittleEndian.Uint16(raw[24:26]))
-	relation, ok := decodeGeoShapeRelation(raw[26])
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[20:24]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[24:26]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[26:28]))
+	polygonCount := int(binary.LittleEndian.Uint16(raw[28:30]))
+	relation, ok := decodeGeoShapeRelation(raw[30])
 	if !ok || polygonCount == 0 {
 		return TextGeoShapeRequest{}, ErrInvalid
 	}
@@ -1370,6 +1427,7 @@ func DecodeTextGeoShapeRequest(raw []byte) (TextGeoShapeRequest, error) {
 		Field:     field,
 		Relation:  relation,
 		Polygons:  polygons,
+		Boost:     boost,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil
@@ -1402,7 +1460,7 @@ func decodeGeoShapeRelation(code byte) (string, bool) {
 }
 
 func DecodeTextTermRangeRequest(raw []byte) (TextTermRangeRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 4
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 4 + 4
 	if len(raw) < headerLen {
 		return TextTermRangeRequest{}, ErrInvalid
 	}
@@ -1412,10 +1470,11 @@ func DecodeTextTermRangeRequest(raw []byte) (TextTermRangeRequest, error) {
 	flags := binary.LittleEndian.Uint32(raw[8:12])
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
-	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
-	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
-	minLen := int(binary.LittleEndian.Uint32(raw[24:28]))
-	maxLen := int(binary.LittleEndian.Uint32(raw[28:32]))
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[20:24]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[24:26]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[26:28]))
+	minLen := int(binary.LittleEndian.Uint32(raw[28:32]))
+	maxLen := int(binary.LittleEndian.Uint32(raw[32:36]))
 	if len(raw) < headerLen+indexNameLen+fieldLen+minLen+maxLen {
 		return TextTermRangeRequest{}, ErrInvalid
 	}
@@ -1444,13 +1503,14 @@ func DecodeTextTermRangeRequest(raw []byte) (TextTermRangeRequest, error) {
 		Max:          max,
 		InclusiveMin: inclusiveMin,
 		InclusiveMax: inclusiveMax,
+		Boost:        boost,
 		Limit:        limit,
 		Offset:       offset,
 	}, nil
 }
 
 func DecodeTextDocIDRequest(raw []byte) (TextDocIDRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2
 	if len(raw) < headerLen {
 		return TextDocIDRequest{}, ErrInvalid
 	}
@@ -1459,7 +1519,8 @@ func DecodeTextDocIDRequest(raw []byte) (TextDocIDRequest, error) {
 	}
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
-	count := int(binary.LittleEndian.Uint16(raw[20:22]))
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[20:24]))
+	count := int(binary.LittleEndian.Uint16(raw[24:26]))
 	cursor := headerLen
 	ids := make([]string, count)
 	for i := 0; i < count; i++ {
@@ -1474,11 +1535,11 @@ func DecodeTextDocIDRequest(raw []byte) (TextDocIDRequest, error) {
 		ids[i] = string(raw[cursor : cursor+idLen])
 		cursor += idLen
 	}
-	return TextDocIDRequest{IDs: ids, Limit: limit, Offset: offset}, nil
+	return TextDocIDRequest{IDs: ids, Boost: boost, Limit: limit, Offset: offset}, nil
 }
 
 func DecodeTextBoolFieldRequest(raw []byte) (TextBoolFieldRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 1 + 1
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 1 + 1
 	if len(raw) < headerLen {
 		return TextBoolFieldRequest{}, ErrInvalid
 	}
@@ -1487,9 +1548,10 @@ func DecodeTextBoolFieldRequest(raw []byte) (TextBoolFieldRequest, error) {
 	}
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
-	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
-	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
-	value := raw[24] != 0
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[20:24]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[24:26]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[26:28]))
+	value := raw[28] != 0
 	if len(raw) < headerLen+indexNameLen+fieldLen {
 		return TextBoolFieldRequest{}, ErrInvalid
 	}
@@ -1501,13 +1563,14 @@ func DecodeTextBoolFieldRequest(raw []byte) (TextBoolFieldRequest, error) {
 		IndexName: indexName,
 		Field:     field,
 		Value:     value,
+		Boost:     boost,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil
 }
 
 func DecodeTextIPRangeRequest(raw []byte) (TextIPRangeRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 4
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 4
 	if len(raw) < headerLen {
 		return TextIPRangeRequest{}, ErrInvalid
 	}
@@ -1516,9 +1579,10 @@ func DecodeTextIPRangeRequest(raw []byte) (TextIPRangeRequest, error) {
 	}
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
-	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
-	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
-	cidrLen := int(binary.LittleEndian.Uint32(raw[24:28]))
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[20:24]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[24:26]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[26:28]))
+	cidrLen := int(binary.LittleEndian.Uint32(raw[28:32]))
 	if len(raw) < headerLen+indexNameLen+fieldLen+cidrLen {
 		return TextIPRangeRequest{}, ErrInvalid
 	}
@@ -1532,13 +1596,14 @@ func DecodeTextIPRangeRequest(raw []byte) (TextIPRangeRequest, error) {
 		IndexName: indexName,
 		Field:     field,
 		CIDR:      cidr,
+		Boost:     boost,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil
 }
 
 func DecodeTextPhraseRequest(raw []byte) (TextPhraseRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 2 + 2
 	if len(raw) < headerLen {
 		return TextPhraseRequest{}, ErrInvalid
 	}
@@ -1548,10 +1613,11 @@ func DecodeTextPhraseRequest(raw []byte) (TextPhraseRequest, error) {
 	flags := binary.LittleEndian.Uint32(raw[8:12])
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
-	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
-	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
-	fuzziness := binary.LittleEndian.Uint16(raw[24:26])
-	termCount := int(binary.LittleEndian.Uint16(raw[26:28]))
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[20:24]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[24:26]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[26:28]))
+	fuzziness := binary.LittleEndian.Uint16(raw[28:30])
+	termCount := int(binary.LittleEndian.Uint16(raw[30:32]))
 	if len(raw) < headerLen+indexNameLen+fieldLen {
 		return TextPhraseRequest{}, ErrInvalid
 	}
@@ -1579,13 +1645,14 @@ func DecodeTextPhraseRequest(raw []byte) (TextPhraseRequest, error) {
 		Terms:     terms,
 		Fuzziness: fuzziness,
 		Auto:      flags&1 != 0,
+		Boost:     boost,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil
 }
 
 func DecodeTextMultiPhraseRequest(raw []byte) (TextMultiPhraseRequest, error) {
-	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 2 + 2 + 2 + 2
+	const headerLen = 4 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 2 + 2 + 2
 	if len(raw) < headerLen {
 		return TextMultiPhraseRequest{}, ErrInvalid
 	}
@@ -1595,10 +1662,11 @@ func DecodeTextMultiPhraseRequest(raw []byte) (TextMultiPhraseRequest, error) {
 	flags := binary.LittleEndian.Uint32(raw[8:12])
 	limit := binary.LittleEndian.Uint32(raw[12:16])
 	offset := binary.LittleEndian.Uint32(raw[16:20])
-	indexNameLen := int(binary.LittleEndian.Uint16(raw[20:22]))
-	fieldLen := int(binary.LittleEndian.Uint16(raw[22:24]))
-	fuzziness := binary.LittleEndian.Uint16(raw[24:26])
-	groupCount := int(binary.LittleEndian.Uint16(raw[26:28]))
+	boost := math.Float32frombits(binary.LittleEndian.Uint32(raw[20:24]))
+	indexNameLen := int(binary.LittleEndian.Uint16(raw[24:26]))
+	fieldLen := int(binary.LittleEndian.Uint16(raw[26:28]))
+	fuzziness := binary.LittleEndian.Uint16(raw[28:30])
+	groupCount := int(binary.LittleEndian.Uint16(raw[30:32]))
 	if len(raw) < headerLen+indexNameLen+fieldLen {
 		return TextMultiPhraseRequest{}, ErrInvalid
 	}
@@ -1635,6 +1703,7 @@ func DecodeTextMultiPhraseRequest(raw []byte) (TextMultiPhraseRequest, error) {
 		Terms:     terms,
 		Fuzziness: fuzziness,
 		Auto:      flags&1 != 0,
+		Boost:     boost,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil

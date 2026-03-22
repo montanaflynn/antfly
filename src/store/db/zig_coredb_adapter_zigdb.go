@@ -908,7 +908,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		if err != nil {
 			return nil, err
 		}
-		bleveReq := bleve.NewSearchRequestOptions(blevequery.NewQueryStringQuery(req.Text), int(req.Limit), int(req.Offset), false)
+		bleveReq := bleve.NewSearchRequestOptions(applySearchWireBoost(blevequery.NewQueryStringQuery(req.Text), req.Boost), int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
 			return nil, err
@@ -936,6 +936,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		}
 		bleveReq := bleve.NewSearchRequestOptions(blevequery.NewPrefixQuery(req.Text), int(req.Limit), int(req.Offset), false)
 		bleveReq.Query.(*blevequery.PrefixQuery).SetField(req.Field)
+		applySearchWireBoost(bleveReq.Query, req.Boost)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
 			return nil, err
@@ -948,6 +949,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		}
 		bleveReq := bleve.NewSearchRequestOptions(blevequery.NewWildcardQuery(req.Text), int(req.Limit), int(req.Offset), false)
 		bleveReq.Query.(*blevequery.WildcardQuery).SetField(req.Field)
+		applySearchWireBoost(bleveReq.Query, req.Boost)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
 			return nil, err
@@ -960,6 +962,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		}
 		bleveReq := bleve.NewSearchRequestOptions(blevequery.NewRegexpQuery(req.Text), int(req.Limit), int(req.Offset), false)
 		bleveReq.Query.(*blevequery.RegexpQuery).SetField(req.Field)
+		applySearchWireBoost(bleveReq.Query, req.Boost)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
 			return nil, err
@@ -978,6 +981,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		} else {
 			q.SetFuzziness(int(req.Fuzziness))
 		}
+		applySearchWireBoost(q, req.Boost)
 		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
@@ -989,7 +993,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		if err != nil {
 			return nil, err
 		}
-		bleveReq := bleve.NewSearchRequestOptions(blevequery.NewMatchAllQuery(), int(req.Limit), int(req.Offset), false)
+		bleveReq := bleve.NewSearchRequestOptions(applySearchWireBoost(blevequery.NewMatchAllQuery(), req.Boost), int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
 			return nil, err
@@ -1000,7 +1004,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		if err != nil {
 			return nil, err
 		}
-		bleveReq := bleve.NewSearchRequestOptions(blevequery.NewMatchNoneQuery(), int(req.Limit), int(req.Offset), false)
+		bleveReq := bleve.NewSearchRequestOptions(applySearchWireBoost(blevequery.NewMatchNoneQuery(), req.Boost), int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
 			return nil, err
@@ -1016,6 +1020,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		if req.DateTimeParser != "" {
 			q.SetDateTimeParser(req.DateTimeParser)
 		}
+		applySearchWireBoost(q, req.Boost)
 		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
@@ -1029,6 +1034,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		}
 		q := blevequery.NewNumericRangeInclusiveQuery(req.Min, req.Max, req.InclusiveMin, req.InclusiveMax)
 		q.SetField(req.Field)
+		applySearchWireBoost(q, req.Boost)
 		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
@@ -1042,6 +1048,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		}
 		q := bleve.NewGeoDistanceQuery(req.Lon, req.Lat, req.Distance)
 		q.SetField(req.Field)
+		applySearchWireBoost(q, req.Boost)
 		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
@@ -1055,6 +1062,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		}
 		q := bleve.NewGeoBoundingBoxQuery(req.TopLeftLon, req.TopLeftLat, req.BottomRightLon, req.BottomRightLat)
 		q.SetField(req.Field)
+		applySearchWireBoost(q, req.Boost)
 		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
@@ -1070,6 +1078,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		copy(points, req.Points)
 		q := blevequery.NewGeoBoundingPolygonQuery(points)
 		q.SetField(req.Field)
+		applySearchWireBoost(q, req.Boost)
 		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
@@ -1098,6 +1107,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 			return nil, err
 		}
 		q.SetField(req.Field)
+		applySearchWireBoost(q, req.Boost)
 		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
@@ -1111,6 +1121,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		}
 		q := blevequery.NewTermRangeInclusiveQuery(req.Min, req.Max, req.InclusiveMin, req.InclusiveMax)
 		q.SetField(req.Field)
+		applySearchWireBoost(q, req.Boost)
 		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
@@ -1122,7 +1133,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		if err != nil {
 			return nil, err
 		}
-		bleveReq := bleve.NewSearchRequestOptions(blevequery.NewDocIDQuery(req.IDs), int(req.Limit), int(req.Offset), false)
+		bleveReq := bleve.NewSearchRequestOptions(applySearchWireBoost(blevequery.NewDocIDQuery(req.IDs), req.Boost), int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
 			return nil, err
@@ -1135,6 +1146,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		}
 		q := blevequery.NewBoolFieldQuery(req.Value)
 		q.SetField(req.Field)
+		applySearchWireBoost(q, req.Boost)
 		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
@@ -1148,6 +1160,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		}
 		q := blevequery.NewIPRangeQuery(req.CIDR)
 		q.SetField(req.Field)
+		applySearchWireBoost(q, req.Boost)
 		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
@@ -1165,6 +1178,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		} else if req.Fuzziness != 0 {
 			q.SetFuzziness(int(req.Fuzziness))
 		}
+		applySearchWireBoost(q, req.Boost)
 		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {
@@ -1182,6 +1196,7 @@ func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridg
 		} else if req.Fuzziness != 0 {
 			q.SetFuzziness(int(req.Fuzziness))
 		}
+		applySearchWireBoost(q, req.Boost)
 		bleveReq := bleve.NewSearchRequestOptions(q, int(req.Limit), int(req.Offset), false)
 		result, _, err := executeNarrowedTextSearch(db, bridge, bleveReq, indexes.FullTextPagingOptions{}, nil, int(req.Limit), nil, nil, nil)
 		if err != nil {

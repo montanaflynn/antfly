@@ -1282,15 +1282,15 @@ func decodePackedDenseSearchResult(indexName string, result C.AntflyPackedDenseS
 }
 
 func encodeTextMatchWireRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextMatchRequest(indexName, field, text, "", 0, 0, false, 0, limit, offset)
+	return searchwire.EncodeTextMatchRequest(indexName, field, text, "", 0, 0, false, 0, 1.0, limit, offset)
 }
 
 func encodeTextTermWireRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextTermRequest(indexName, field, text, limit, offset)
+	return searchwire.EncodeTextTermRequest(indexName, field, text, 1.0, limit, offset)
 }
 
 func encodeTextMatchPhraseWireRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextMatchPhraseRequest(indexName, field, text, "", 0, false, limit, offset)
+	return searchwire.EncodeTextMatchPhraseRequest(indexName, field, text, "", 0, false, 1.0, limit, offset)
 }
 
 func (b *Bridge) SearchTextMatchWireRaw(req []byte) ([]byte, error) {

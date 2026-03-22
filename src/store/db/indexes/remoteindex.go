@@ -994,12 +994,12 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 		if !ok {
 			return nil, 0, false
 		}
-		return searchwire.EncodeTextMatchRequest("full_text_index", typed.Field(), typed.Match, typed.Analyzer, uint16(typed.Prefix), fuzziness, auto, uint8(typed.Operator), uint32(req.Size), uint32(req.From)), searchWireOpTextMatch, true
+		return searchwire.EncodeTextMatchRequest("full_text_index", typed.Field(), typed.Match, typed.Analyzer, uint16(typed.Prefix), fuzziness, auto, uint8(typed.Operator), searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextMatch, true
 	case *query.TermQuery:
 		if typed.Field() == "" || typed.Term == "" {
 			return nil, 0, false
 		}
-		return encodeTextSearchWire(searchWireOpTextTerm, "full_text_index", typed.Field(), typed.Term, uint32(req.Size), uint32(req.From)), searchWireOpTextTerm, true
+		return encodeTextSearchWire(searchWireOpTextTerm, "full_text_index", typed.Field(), typed.Term, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextTerm, true
 	case *query.MatchPhraseQuery:
 		if typed.Field() == "" || typed.MatchPhrase == "" {
 			return nil, 0, false
@@ -1008,7 +1008,7 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 		if !ok {
 			return nil, 0, false
 		}
-		return searchwire.EncodeTextMatchPhraseRequest("full_text_index", typed.Field(), typed.MatchPhrase, typed.Analyzer, fuzziness, auto, uint32(req.Size), uint32(req.From)), searchWireOpTextMatchPhrase, true
+		return searchwire.EncodeTextMatchPhraseRequest("full_text_index", typed.Field(), typed.MatchPhrase, typed.Analyzer, fuzziness, auto, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextMatchPhrase, true
 	case *query.PhraseQuery:
 		if typed.Field() == "" || len(typed.Terms) == 0 {
 			return nil, 0, false
@@ -1017,7 +1017,7 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 		if !ok {
 			return nil, 0, false
 		}
-		return searchwire.EncodeTextPhraseRequest("full_text_index", typed.Field(), typed.Terms, fuzziness, auto, uint32(req.Size), uint32(req.From)), searchWireOpTextPhrase, true
+		return searchwire.EncodeTextPhraseRequest("full_text_index", typed.Field(), typed.Terms, fuzziness, auto, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextPhrase, true
 	case *query.MultiPhraseQuery:
 		if typed.Field() == "" || len(typed.Terms) == 0 {
 			return nil, 0, false
@@ -1026,36 +1026,36 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 		if !ok {
 			return nil, 0, false
 		}
-		return searchwire.EncodeTextMultiPhraseRequest("full_text_index", typed.Field(), typed.Terms, fuzziness, auto, uint32(req.Size), uint32(req.From)), searchWireOpTextMultiPhrase, true
+		return searchwire.EncodeTextMultiPhraseRequest("full_text_index", typed.Field(), typed.Terms, fuzziness, auto, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextMultiPhrase, true
 	case *query.QueryStringQuery:
 		if typed.Query == "" {
 			return nil, 0, false
 		}
-		return encodeTextSearchWire(searchWireOpTextQueryString, "full_text_index", "", typed.Query, uint32(req.Size), uint32(req.From)), searchWireOpTextQueryString, true
+		return encodeTextSearchWire(searchWireOpTextQueryString, "full_text_index", "", typed.Query, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextQueryString, true
 	case *query.PrefixQuery:
 		if typed.Field() == "" || typed.Prefix == "" {
 			return nil, 0, false
 		}
-		return encodeTextSearchWire(searchWireOpTextPrefix, "full_text_index", typed.Field(), typed.Prefix, uint32(req.Size), uint32(req.From)), searchWireOpTextPrefix, true
+		return encodeTextSearchWire(searchWireOpTextPrefix, "full_text_index", typed.Field(), typed.Prefix, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextPrefix, true
 	case *query.WildcardQuery:
 		if typed.Field() == "" || typed.Wildcard == "" {
 			return nil, 0, false
 		}
-		return encodeTextSearchWire(searchWireOpTextWildcard, "full_text_index", typed.Field(), typed.Wildcard, uint32(req.Size), uint32(req.From)), searchWireOpTextWildcard, true
+		return encodeTextSearchWire(searchWireOpTextWildcard, "full_text_index", typed.Field(), typed.Wildcard, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextWildcard, true
 	case *query.RegexpQuery:
 		if typed.Field() == "" || typed.Regexp == "" {
 			return nil, 0, false
 		}
-		return encodeTextSearchWire(searchWireOpTextRegexp, "full_text_index", typed.Field(), typed.Regexp, uint32(req.Size), uint32(req.From)), searchWireOpTextRegexp, true
+		return encodeTextSearchWire(searchWireOpTextRegexp, "full_text_index", typed.Field(), typed.Regexp, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextRegexp, true
 	case *query.FuzzyQuery:
 		if typed.Field() == "" || typed.Term == "" {
 			return nil, 0, false
 		}
-		return searchwire.EncodeTextFuzzyRequest("full_text_index", typed.Field(), typed.Term, uint16(typed.Prefix), uint16(typed.Fuzziness), false, uint32(req.Size), uint32(req.From)), searchWireOpTextFuzzy, true
+		return searchwire.EncodeTextFuzzyRequest("full_text_index", typed.Field(), typed.Term, uint16(typed.Prefix), uint16(typed.Fuzziness), false, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextFuzzy, true
 	case *query.MatchAllQuery:
-		return searchwire.EncodeTextMatchAllRequest("full_text_index", uint32(req.Size), uint32(req.From)), searchWireOpTextMatchAll, true
+		return searchwire.EncodeTextMatchAllRequest("full_text_index", searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextMatchAll, true
 	case *query.MatchNoneQuery:
-		return searchwire.EncodeTextMatchNoneRequest("full_text_index", uint32(req.Size), uint32(req.From)), searchWireOpTextMatchNone, true
+		return searchwire.EncodeTextMatchNoneRequest("full_text_index", searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextMatchNone, true
 	case *query.DateRangeQuery:
 		if typed.Field() == "" || (typed.Start.IsZero() && typed.End.IsZero()) {
 			return nil, 0, false
@@ -1068,34 +1068,34 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 		if !typed.End.IsZero() {
 			end = typed.End.Time.Format(time.RFC3339Nano)
 		}
-		return searchwire.EncodeTextDateRangeRequest("full_text_index", typed.Field(), start, end, typed.InclusiveStart, typed.InclusiveEnd, "", uint32(req.Size), uint32(req.From)), searchWireOpTextDateRange, true
+		return searchwire.EncodeTextDateRangeRequest("full_text_index", typed.Field(), start, end, typed.InclusiveStart, typed.InclusiveEnd, "", searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextDateRange, true
 	case *query.DateRangeStringQuery:
 		if typed.Field() == "" {
 			return nil, 0, false
 		}
-		return searchwire.EncodeTextDateRangeRequest("full_text_index", typed.Field(), typed.Start, typed.End, typed.InclusiveStart, typed.InclusiveEnd, typed.DateTimeParserName(), uint32(req.Size), uint32(req.From)), searchWireOpTextDateRange, true
+		return searchwire.EncodeTextDateRangeRequest("full_text_index", typed.Field(), typed.Start, typed.End, typed.InclusiveStart, typed.InclusiveEnd, typed.DateTimeParserName(), searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextDateRange, true
 	case *query.NumericRangeQuery:
 		if typed.Field() == "" {
 			return nil, 0, false
 		}
-		return searchwire.EncodeTextNumericRangeRequest("full_text_index", typed.Field(), typed.Min, typed.Max, typed.InclusiveMin, typed.InclusiveMax, uint32(req.Size), uint32(req.From)), searchWireOpTextNumericRange, true
+		return searchwire.EncodeTextNumericRangeRequest("full_text_index", typed.Field(), typed.Min, typed.Max, typed.InclusiveMin, typed.InclusiveMax, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextNumericRange, true
 	case *query.GeoDistanceQuery:
 		if typed.Field() == "" || len(typed.Location) != 2 || typed.Distance == "" {
 			return nil, 0, false
 		}
-		return searchwire.EncodeTextGeoDistanceRequest("full_text_index", typed.Field(), typed.Location[0], typed.Location[1], typed.Distance, uint32(req.Size), uint32(req.From)), searchWireOpTextGeoDistance, true
+		return searchwire.EncodeTextGeoDistanceRequest("full_text_index", typed.Field(), typed.Location[0], typed.Location[1], typed.Distance, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextGeoDistance, true
 	case *query.GeoBoundingBoxQuery:
 		if typed.Field() == "" || len(typed.TopLeft) != 2 || len(typed.BottomRight) != 2 {
 			return nil, 0, false
 		}
-		return searchwire.EncodeTextGeoBoundingBoxRequest("full_text_index", typed.Field(), typed.TopLeft[0], typed.TopLeft[1], typed.BottomRight[0], typed.BottomRight[1], uint32(req.Size), uint32(req.From)), searchWireOpTextGeoBBox, true
+		return searchwire.EncodeTextGeoBoundingBoxRequest("full_text_index", typed.Field(), typed.TopLeft[0], typed.TopLeft[1], typed.BottomRight[0], typed.BottomRight[1], searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextGeoBBox, true
 	case *query.GeoBoundingPolygonQuery:
 		if typed.Field() == "" || len(typed.Points) == 0 {
 			return nil, 0, false
 		}
-		return searchwire.EncodeTextGeoBoundingPolygonRequest("full_text_index", typed.Field(), typed.Points, uint32(req.Size), uint32(req.From)), searchWireOpTextGeoPolygon, true
+		return searchwire.EncodeTextGeoBoundingPolygonRequest("full_text_index", typed.Field(), typed.Points, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextGeoPolygon, true
 	case *query.GeoShapeQuery:
-		body, ok := encodeGeoShapeSearchWire("full_text_index", typed, uint32(req.Size), uint32(req.From))
+		body, ok := encodeGeoShapeSearchWire("full_text_index", typed, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From))
 		if !ok {
 			return nil, 0, false
 		}
@@ -1104,22 +1104,22 @@ func encodeSimpleTextSearchWire(req *bleve.SearchRequest) ([]byte, uint16, bool)
 		if typed.Field() == "" {
 			return nil, 0, false
 		}
-		return searchwire.EncodeTextTermRangeRequest("full_text_index", typed.Field(), typed.Min, typed.Max, typed.InclusiveMin, typed.InclusiveMax, uint32(req.Size), uint32(req.From)), searchWireOpTextTermRange, true
+		return searchwire.EncodeTextTermRangeRequest("full_text_index", typed.Field(), typed.Min, typed.Max, typed.InclusiveMin, typed.InclusiveMax, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextTermRange, true
 	case *query.DocIDQuery:
 		if len(typed.IDs) == 0 {
 			return nil, 0, false
 		}
-		return searchwire.EncodeTextDocIDRequest(typed.IDs, uint32(req.Size), uint32(req.From)), searchWireOpTextDocID, true
+		return searchwire.EncodeTextDocIDRequest(typed.IDs, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextDocID, true
 	case *query.BoolFieldQuery:
 		if typed.Field() == "" {
 			return nil, 0, false
 		}
-		return searchwire.EncodeTextBoolFieldRequest("full_text_index", typed.Field(), typed.Bool, uint32(req.Size), uint32(req.From)), searchWireOpTextBoolField, true
+		return searchwire.EncodeTextBoolFieldRequest("full_text_index", typed.Field(), typed.Bool, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextBoolField, true
 	case *query.IPRangeQuery:
 		if typed.Field() == "" || typed.CIDR == "" {
 			return nil, 0, false
 		}
-		return searchwire.EncodeTextIPRangeRequest("full_text_index", typed.Field(), typed.CIDR, uint32(req.Size), uint32(req.From)), searchWireOpTextIPRange, true
+		return searchwire.EncodeTextIPRangeRequest("full_text_index", typed.Field(), typed.CIDR, searchWireBoost(typed.Boost()), uint32(req.Size), uint32(req.From)), searchWireOpTextIPRange, true
 	case *query.BooleanQuery:
 		if body, ok := encodeBoolTextSearchWire("full_text_index", typed, uint32(req.Size), uint32(req.From)); ok {
 			return body, searchWireOpTextBool, true
@@ -1234,11 +1234,11 @@ func searchWireMatchPhraseFuzziness(q *query.MatchPhraseQuery) (uint16, bool, bo
 	}
 }
 
-func encodeTextSearchWire(op uint16, indexName, field, text string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextRequest(op, indexName, field, text, "", 0, 0, false, 0, limit, offset)
+func encodeTextSearchWire(op uint16, indexName, field, text string, boost float32, limit, offset uint32) []byte {
+	return searchwire.EncodeTextRequest(op, indexName, field, text, "", 0, 0, false, 0, boost, limit, offset)
 }
 
-func encodeGeoShapeSearchWire(indexName string, q *query.GeoShapeQuery, limit, offset uint32) ([]byte, bool) {
+func encodeGeoShapeSearchWire(indexName string, q *query.GeoShapeQuery, boost float32, limit, offset uint32) ([]byte, bool) {
 	if q == nil || q.Field() == "" || q.Geometry.Shape == nil {
 		return nil, false
 	}
@@ -1275,7 +1275,7 @@ func encodeGeoShapeSearchWire(indexName string, q *query.GeoShapeQuery, limit, o
 		if !ok {
 			return nil, false
 		}
-		return searchwire.EncodeTextGeoShapeRequest(indexName, q.Field(), relation, [][]blevegeo.Point{polygon}, limit, offset), true
+		return searchwire.EncodeTextGeoShapeRequest(indexName, q.Field(), relation, [][]blevegeo.Point{polygon}, boost, limit, offset), true
 	case "multipolygon":
 		var coordinates [][][][]float64
 		if err := json.Unmarshal(parsed.Coordinates, &coordinates); err != nil || len(coordinates) == 0 {
@@ -1292,7 +1292,7 @@ func encodeGeoShapeSearchWire(indexName string, q *query.GeoShapeQuery, limit, o
 			}
 			polygons = append(polygons, polygon)
 		}
-		return searchwire.EncodeTextGeoShapeRequest(indexName, q.Field(), relation, polygons, limit, offset), true
+		return searchwire.EncodeTextGeoShapeRequest(indexName, q.Field(), relation, polygons, boost, limit, offset), true
 	default:
 		return nil, false
 	}

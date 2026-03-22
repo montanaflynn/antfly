@@ -3800,6 +3800,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 				q.SetPrefix(int(textReq.Prefix))
 			}
 			q.SetOperator(query.MatchQueryOperator(textReq.Operator))
+			applySearchWireBoost(q, textReq.Boost)
 			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
 			indexName = textReq.IndexName
 		}
@@ -3808,6 +3809,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		if err == nil {
 			q := query.NewTermQuery(textReq.Text)
 			q.SetField(textReq.Field)
+			applySearchWireBoost(q, textReq.Boost)
 			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
 			indexName = textReq.IndexName
 		}
@@ -3822,13 +3824,14 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 			} else if textReq.Fuzziness != 0 {
 				q.SetFuzziness(int(textReq.Fuzziness))
 			}
+			applySearchWireBoost(q, textReq.Boost)
 			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
 			indexName = textReq.IndexName
 		}
 	case searchWireOpTextQueryString:
 		textReq, err = decodeSearchWireTextQueryStringRequest(encodedRequest)
 		if err == nil {
-			bleveReq = bleve.NewSearchRequestOptions(query.NewQueryStringQuery(textReq.Text), int(textReq.Limit), int(textReq.Offset), false)
+			bleveReq = bleve.NewSearchRequestOptions(applySearchWireBoost(query.NewQueryStringQuery(textReq.Text), textReq.Boost), int(textReq.Limit), int(textReq.Offset), false)
 			indexName = textReq.IndexName
 		}
 	case searchWireOpTextBool:
@@ -3847,6 +3850,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		if err == nil {
 			q := query.NewPrefixQuery(textReq.Text)
 			q.SetField(textReq.Field)
+			applySearchWireBoost(q, textReq.Boost)
 			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
 			indexName = textReq.IndexName
 		}
@@ -3855,6 +3859,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		if err == nil {
 			q := query.NewWildcardQuery(textReq.Text)
 			q.SetField(textReq.Field)
+			applySearchWireBoost(q, textReq.Boost)
 			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
 			indexName = textReq.IndexName
 		}
@@ -3863,6 +3868,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		if err == nil {
 			q := query.NewRegexpQuery(textReq.Text)
 			q.SetField(textReq.Field)
+			applySearchWireBoost(q, textReq.Boost)
 			bleveReq = bleve.NewSearchRequestOptions(q, int(textReq.Limit), int(textReq.Offset), false)
 			indexName = textReq.IndexName
 		}
@@ -3879,18 +3885,19 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		} else {
 			q.SetFuzziness(int(fuzzyReq.Fuzziness))
 		}
+		applySearchWireBoost(q, fuzzyReq.Boost)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(fuzzyReq.Limit), int(fuzzyReq.Offset), false)
 		indexName = fuzzyReq.IndexName
 	case searchWireOpTextMatchAll:
 		textReq, err = decodeSearchWireTextMatchAllRequest(encodedRequest)
 		if err == nil {
-			bleveReq = bleve.NewSearchRequestOptions(query.NewMatchAllQuery(), int(textReq.Limit), int(textReq.Offset), false)
+			bleveReq = bleve.NewSearchRequestOptions(applySearchWireBoost(query.NewMatchAllQuery(), textReq.Boost), int(textReq.Limit), int(textReq.Offset), false)
 			indexName = textReq.IndexName
 		}
 	case searchWireOpTextMatchNone:
 		textReq, err = decodeSearchWireTextMatchNoneRequest(encodedRequest)
 		if err == nil {
-			bleveReq = bleve.NewSearchRequestOptions(query.NewMatchNoneQuery(), int(textReq.Limit), int(textReq.Offset), false)
+			bleveReq = bleve.NewSearchRequestOptions(applySearchWireBoost(query.NewMatchNoneQuery(), textReq.Boost), int(textReq.Limit), int(textReq.Offset), false)
 			indexName = textReq.IndexName
 		}
 	case searchWireOpTextDateRange:
@@ -3903,6 +3910,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		if rangeReq.DateTimeParser != "" {
 			q.SetDateTimeParser(rangeReq.DateTimeParser)
 		}
+		applySearchWireBoost(q, rangeReq.Boost)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(rangeReq.Limit), int(rangeReq.Offset), false)
 		indexName = rangeReq.IndexName
 	case searchWireOpTextNumericRange:
@@ -3912,6 +3920,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		}
 		q := query.NewNumericRangeInclusiveQuery(rangeReq.Min, rangeReq.Max, rangeReq.InclusiveMin, rangeReq.InclusiveMax)
 		q.SetField(rangeReq.Field)
+		applySearchWireBoost(q, rangeReq.Boost)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(rangeReq.Limit), int(rangeReq.Offset), false)
 		indexName = rangeReq.IndexName
 	case searchWireOpTextGeoDistance:
@@ -3921,6 +3930,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		}
 		q := query.NewGeoDistanceQuery(geoReq.Lon, geoReq.Lat, geoReq.Distance)
 		q.SetField(geoReq.Field)
+		applySearchWireBoost(q, geoReq.Boost)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(geoReq.Limit), int(geoReq.Offset), false)
 		indexName = geoReq.IndexName
 	case searchWireOpTextGeoBBox:
@@ -3930,6 +3940,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		}
 		q := query.NewGeoBoundingBoxQuery(boxReq.TopLeftLon, boxReq.TopLeftLat, boxReq.BottomRightLon, boxReq.BottomRightLat)
 		q.SetField(boxReq.Field)
+		applySearchWireBoost(q, boxReq.Boost)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(boxReq.Limit), int(boxReq.Offset), false)
 		indexName = boxReq.IndexName
 	case searchWireOpTextGeoPolygon:
@@ -3941,6 +3952,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		copy(points, polyReq.Points)
 		q := query.NewGeoBoundingPolygonQuery(points)
 		q.SetField(polyReq.Field)
+		applySearchWireBoost(q, polyReq.Boost)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(polyReq.Limit), int(polyReq.Offset), false)
 		indexName = polyReq.IndexName
 	case searchWireOpTextGeoShape:
@@ -3965,6 +3977,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 			return nil, buildErr
 		}
 		q.SetField(shapeReq.Field)
+		applySearchWireBoost(q, shapeReq.Boost)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(shapeReq.Limit), int(shapeReq.Offset), false)
 		indexName = shapeReq.IndexName
 	case searchWireOpTextTermRange:
@@ -3974,6 +3987,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		}
 		q := query.NewTermRangeInclusiveQuery(rangeReq.Min, rangeReq.Max, rangeReq.InclusiveMin, rangeReq.InclusiveMax)
 		q.SetField(rangeReq.Field)
+		applySearchWireBoost(q, rangeReq.Boost)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(rangeReq.Limit), int(rangeReq.Offset), false)
 		indexName = rangeReq.IndexName
 	case searchWireOpTextDocID:
@@ -3982,6 +3996,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 			return nil, decodeErr
 		}
 		q := query.NewDocIDQuery(docReq.IDs)
+		applySearchWireBoost(q, docReq.Boost)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(docReq.Limit), int(docReq.Offset), false)
 		indexName = s.resolveWireSearchIndexName("full_text_index")
 	case searchWireOpTextBoolField:
@@ -3991,6 +4006,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		}
 		q := query.NewBoolFieldQuery(boolReq.Value)
 		q.SetField(boolReq.Field)
+		applySearchWireBoost(q, boolReq.Boost)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(boolReq.Limit), int(boolReq.Offset), false)
 		indexName = boolReq.IndexName
 	case searchWireOpTextIPRange:
@@ -4000,6 +4016,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		}
 		q := query.NewIPRangeQuery(ipReq.CIDR)
 		q.SetField(ipReq.Field)
+		applySearchWireBoost(q, ipReq.Boost)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(ipReq.Limit), int(ipReq.Offset), false)
 		indexName = ipReq.IndexName
 	case searchWireOpTextPhrase:
@@ -4013,6 +4030,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		} else if phraseReq.Fuzziness != 0 {
 			q.SetFuzziness(int(phraseReq.Fuzziness))
 		}
+		applySearchWireBoost(q, phraseReq.Boost)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(phraseReq.Limit), int(phraseReq.Offset), false)
 		indexName = phraseReq.IndexName
 	case searchWireOpTextMultiPhrase:
@@ -4026,6 +4044,7 @@ func (s *DBImpl) searchWireTextFastPath(ctx context.Context, encodedRequest []by
 		} else if phraseReq.Fuzziness != 0 {
 			q.SetFuzziness(int(phraseReq.Fuzziness))
 		}
+		applySearchWireBoost(q, phraseReq.Boost)
 		bleveReq = bleve.NewSearchRequestOptions(q, int(phraseReq.Limit), int(phraseReq.Offset), false)
 		indexName = phraseReq.IndexName
 	default:

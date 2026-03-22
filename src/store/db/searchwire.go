@@ -77,91 +77,91 @@ func decodeSearchWireDenseRequest(raw []byte) (searchWireDenseRequest, error) {
 }
 
 func encodeSearchWireTextMatchRequest(indexName, field, text, analyzer string, prefix, fuzziness uint16, auto bool, operator uint8, limit, offset uint32) []byte {
-	return searchwire.EncodeTextMatchRequest(indexName, field, text, analyzer, prefix, fuzziness, auto, operator, limit, offset)
+	return searchwire.EncodeTextMatchRequest(indexName, field, text, analyzer, prefix, fuzziness, auto, operator, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextTermRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextTermRequest(indexName, field, text, limit, offset)
+	return searchwire.EncodeTextTermRequest(indexName, field, text, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextMatchPhraseRequest(indexName, field, text, analyzer string, fuzziness uint16, auto bool, limit, offset uint32) []byte {
-	return searchwire.EncodeTextMatchPhraseRequest(indexName, field, text, analyzer, fuzziness, auto, limit, offset)
+	return searchwire.EncodeTextMatchPhraseRequest(indexName, field, text, analyzer, fuzziness, auto, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextQueryStringRequest(indexName, text string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextQueryStringRequest(indexName, text, limit, offset)
+	return searchwire.EncodeTextQueryStringRequest(indexName, text, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextPrefixRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextPrefixRequest(indexName, field, text, limit, offset)
+	return searchwire.EncodeTextPrefixRequest(indexName, field, text, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextWildcardRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextWildcardRequest(indexName, field, text, limit, offset)
+	return searchwire.EncodeTextWildcardRequest(indexName, field, text, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextRegexpRequest(indexName, field, text string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextRegexpRequest(indexName, field, text, limit, offset)
+	return searchwire.EncodeTextRegexpRequest(indexName, field, text, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextFuzzyRequest(indexName, field, text string, prefix, fuzziness uint16, auto bool, limit, offset uint32) []byte {
-	return searchwire.EncodeTextFuzzyRequest(indexName, field, text, prefix, fuzziness, auto, limit, offset)
+	return searchwire.EncodeTextFuzzyRequest(indexName, field, text, prefix, fuzziness, auto, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextMatchAllRequest(indexName string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextMatchAllRequest(indexName, limit, offset)
+	return searchwire.EncodeTextMatchAllRequest(indexName, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextMatchNoneRequest(indexName string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextMatchNoneRequest(indexName, limit, offset)
+	return searchwire.EncodeTextMatchNoneRequest(indexName, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextDateRangeRequest(indexName, field, start, end string, inclusiveStart, inclusiveEnd *bool, parser string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextDateRangeRequest(indexName, field, start, end, inclusiveStart, inclusiveEnd, parser, limit, offset)
+	return searchwire.EncodeTextDateRangeRequest(indexName, field, start, end, inclusiveStart, inclusiveEnd, parser, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextNumericRangeRequest(indexName, field string, min, max *float64, inclusiveMin, inclusiveMax *bool, limit, offset uint32) []byte {
-	return searchwire.EncodeTextNumericRangeRequest(indexName, field, min, max, inclusiveMin, inclusiveMax, limit, offset)
+	return searchwire.EncodeTextNumericRangeRequest(indexName, field, min, max, inclusiveMin, inclusiveMax, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextGeoDistanceRequest(indexName, field string, lon, lat float64, distance string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextGeoDistanceRequest(indexName, field, lon, lat, distance, limit, offset)
+	return searchwire.EncodeTextGeoDistanceRequest(indexName, field, lon, lat, distance, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextGeoBoundingBoxRequest(indexName, field string, topLeftLon, topLeftLat, bottomRightLon, bottomRightLat float64, limit, offset uint32) []byte {
-	return searchwire.EncodeTextGeoBoundingBoxRequest(indexName, field, topLeftLon, topLeftLat, bottomRightLon, bottomRightLat, limit, offset)
+	return searchwire.EncodeTextGeoBoundingBoxRequest(indexName, field, topLeftLon, topLeftLat, bottomRightLon, bottomRightLat, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextGeoBoundingPolygonRequest(indexName, field string, points []blevegeo.Point, limit, offset uint32) []byte {
-	return searchwire.EncodeTextGeoBoundingPolygonRequest(indexName, field, points, limit, offset)
+	return searchwire.EncodeTextGeoBoundingPolygonRequest(indexName, field, points, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextGeoShapeRequest(indexName, field, relation string, polygons [][]blevegeo.Point, limit, offset uint32) []byte {
-	return searchwire.EncodeTextGeoShapeRequest(indexName, field, relation, polygons, limit, offset)
+	return searchwire.EncodeTextGeoShapeRequest(indexName, field, relation, polygons, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextTermRangeRequest(indexName, field, min, max string, inclusiveMin, inclusiveMax *bool, limit, offset uint32) []byte {
-	return searchwire.EncodeTextTermRangeRequest(indexName, field, min, max, inclusiveMin, inclusiveMax, limit, offset)
+	return searchwire.EncodeTextTermRangeRequest(indexName, field, min, max, inclusiveMin, inclusiveMax, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextDocIDRequest(ids []string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextDocIDRequest(ids, limit, offset)
+	return searchwire.EncodeTextDocIDRequest(ids, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextBoolFieldRequest(indexName, field string, value bool, limit, offset uint32) []byte {
-	return searchwire.EncodeTextBoolFieldRequest(indexName, field, value, limit, offset)
+	return searchwire.EncodeTextBoolFieldRequest(indexName, field, value, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextIPRangeRequest(indexName, field, cidr string, limit, offset uint32) []byte {
-	return searchwire.EncodeTextIPRangeRequest(indexName, field, cidr, limit, offset)
+	return searchwire.EncodeTextIPRangeRequest(indexName, field, cidr, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextPhraseRequest(indexName, field string, terms []string, fuzziness uint16, auto bool, limit, offset uint32) []byte {
-	return searchwire.EncodeTextPhraseRequest(indexName, field, terms, fuzziness, auto, limit, offset)
+	return searchwire.EncodeTextPhraseRequest(indexName, field, terms, fuzziness, auto, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextMultiPhraseRequest(indexName, field string, terms [][]string, fuzziness uint16, auto bool, limit, offset uint32) []byte {
-	return searchwire.EncodeTextMultiPhraseRequest(indexName, field, terms, fuzziness, auto, limit, offset)
+	return searchwire.EncodeTextMultiPhraseRequest(indexName, field, terms, fuzziness, auto, 1.0, limit, offset)
 }
 
 func encodeSearchWireTextBoolRequest(indexName string, must, should, mustNot []searchWireTextClause, limit, offset uint32) []byte {
