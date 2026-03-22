@@ -888,15 +888,7 @@ func (db *ZigCoreDB) Search(ctx context.Context, encodedRequest []byte) ([]byte,
 func (db *ZigCoreDB) searchWireFastPath(_ context.Context, bridge *zbridge.Bridge, encodedRequest []byte, op uint16) ([]byte, error) {
 	switch op {
 	case searchWireOpDenseKnn:
-		req, err := decodeSearchWireDenseRequest(encodedRequest)
-		if err != nil {
-			return nil, err
-		}
-		result, err := bridge.SearchDenseResult(req.IndexName, req.Vector, req.K, req.Limit, req.Offset)
-		if err != nil {
-			return nil, err
-		}
-		return encodeSearchWireVectorResponse(result), nil
+		return bridge.SearchDenseWireRaw(encodedRequest)
 	case searchWireOpTextMatch:
 		return bridge.SearchTextMatchWireRaw(encodedRequest)
 	case searchWireOpTextTerm:

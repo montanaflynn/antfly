@@ -85,7 +85,7 @@ type HBCConfig struct {
 
 	// Quantization configuration
 	UseQuantization     bool // Whether to use quantization for non-root nodes
-	DisableReranking    bool
+	RerankPolicy        RerankPolicy
 	QuantizerSeed       uint64 // Seed for quantizer initialization
 	UseRandomOrthoTrans bool
 
@@ -105,6 +105,14 @@ type HBCConfig struct {
 	// Example: Extract document key from chunk keys to return best chunk per document.
 	CollapseKeysFunc func(metadataKey []byte) []byte
 }
+
+type RerankPolicy uint8
+
+const (
+	RerankPolicyAlways RerankPolicy = iota
+	RerankPolicyAuto
+	RerankPolicyNever
+)
 
 // hbcIndexMetadata holds the global index metadata
 type hbcIndexMetadata struct {
@@ -2089,6 +2097,10 @@ func (idx *HBCIndex) Search(req *SearchRequest) (r []*Result, err error) {
 
 	// Extract results, skipping items marked as removed during collapse key deduplication
 	finalResults := make([]*Result, 0, results.Len())
+	rerankedVectors := uint64(0)
+	rerankVectorLoadNS := uint64(0)
+	rerankDistanceNS := uint64(0)
+	shouldRerank := idx.config.UseQuantization && idx.config.RerankPolicy != RerankPolicyNever
 
 	for results.Len() > 0 {
 		item := heap.Pop(results).(*PriorityItem)
@@ -2106,28 +2118,34 @@ func (idx *HBCIndex) Search(req *SearchRequest) (r []*Result, err error) {
 			_ = closer.Close()
 		}
 
-		childDist := item.Distance
 		res := &Result{
 			ID:         item.ID,
-			Distance:   childDist,
+			Distance:   item.Distance,
 			Metadata:   metadata,
 			ErrorBound: item.ErrorBounds,
 		}
-		if idx.config.UseQuantization && !idx.config.DisableReranking {
+		if shouldRerank {
 			res.Vector = make(vector.T, int(idx.config.Dimension))
 			var err error
+			loadStart := time.Now()
 			if res.Vector, err = idx.GetVector(idx.indexDB, item.ID, res.Vector); err != nil {
-				// FIXME (ajr) Handle error properly
 				continue
 			}
-			// childDist = vector.MeasureDistance(idx.config.DistanceMetric, req.Embedding, vec)
+			rerankVectorLoadNS += uint64(time.Since(loadStart).Nanoseconds())
 		}
 		finalResults = append(finalResults, res)
 	}
-	// Reverse the results to have the closest first
-	if idx.config.UseQuantization && !idx.config.DisableReranking {
+	if shouldRerank {
+		rerankedVectors = uint64(len(finalResults))
+		distStart := time.Now()
 		q.ComputeExactDistances(true, finalResults)
+		rerankDistanceNS = uint64(time.Since(distStart).Nanoseconds())
 	}
+	recordHBCDebugSearchProfile(HBCDebugSearchProfile{
+		RerankedVectors:    rerankedVectors,
+		RerankVectorLoadNS: rerankVectorLoadNS,
+		RerankDistanceNS:   rerankDistanceNS,
+	})
 	slices.SortFunc(finalResults, func(a, b *Result) int {
 		return cmp.Compare(a.Distance, b.Distance)
 	})

@@ -45,6 +45,27 @@ typedef struct {
 } AntflyPackedDenseSearchResult;
 
 typedef struct {
+	uint64_t total_ns;
+	uint64_t index_lookup_ns;
+	uint64_t search_ns;
+	uint64_t hits_ns;
+	uint64_t fallback_ns;
+	uint64_t hbc_total_ns;
+	uint64_t hbc_root_load_ns;
+	uint64_t hbc_child_expand_ns;
+	uint64_t hbc_leaf_score_ns;
+	uint64_t hbc_rerank_ns;
+	uint64_t hbc_rerank_vector_load_ns;
+	uint64_t hbc_rerank_distance_ns;
+	uint64_t hbc_nodes_visited;
+	uint64_t hbc_leaves_explored;
+	uint64_t hbc_reranked_vectors;
+	uint32_t hit_count;
+	uint32_t total_hits;
+	_Bool used_fast_path;
+} AntflyDenseSearchProfile;
+
+typedef struct {
 	uint8_t* id_ptr;
 	size_t id_len;
 	uint64_t hash;
@@ -91,6 +112,9 @@ AntflyErrorCode antfly_db_scan_hashes(void* handle, AntflySlice request_json, An
 AntflyErrorCode antfly_db_search_json(void* handle, AntflySlice request_json, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_search_hits_json(void* handle, AntflySlice request_json, AntflyDenseSearchResult* out_result);
 AntflyErrorCode antfly_db_search_dense(void* handle, AntflySlice index_name, const float* vector_ptr, size_t vector_len, uint32_t k, uint32_t limit, uint32_t offset, AntflyPackedDenseSearchResult* out_result);
+AntflyErrorCode antfly_db_search_dense_profile(void* handle, AntflySlice index_name, const float* vector_ptr, size_t vector_len, uint32_t k, uint32_t limit, uint32_t offset, AntflyDenseSearchProfile* out_profile);
+AntflyErrorCode antfly_db_dense_noop(void* handle);
+AntflyErrorCode antfly_db_dense_fixed_packed_result(void* handle, AntflyPackedDenseSearchResult* out_result);
 AntflyErrorCode antfly_db_search_dense_wire(void* handle, AntflySlice request_buf, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_search_text_match_wire(void* handle, AntflySlice request_buf, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_search_text_term_wire(void* handle, AntflySlice request_buf, AntflyBuffer* out_buf);
@@ -1192,6 +1216,84 @@ func (b *Bridge) SearchDenseResult(indexName string, vector []float32, k, limit,
 	defer C.antfly_db_packed_dense_search_result_free(&result)
 
 	return decodePackedDenseSearchResult(indexName, result), nil
+}
+
+func (b *Bridge) DenseNoop() error {
+	return mapError(C.antfly_db_dense_noop(b.handle))
+}
+
+func (b *Bridge) DenseFixedPackedResult(indexName string) (*vectorindex.SearchResult, error) {
+	var result C.AntflyPackedDenseSearchResult
+	if err := mapError(C.antfly_db_dense_fixed_packed_result(b.handle, &result)); err != nil {
+		return nil, err
+	}
+	defer C.antfly_db_packed_dense_search_result_free(&result)
+	return decodePackedDenseSearchResult(indexName, result), nil
+}
+
+type DenseSearchProfile struct {
+	TotalNS         uint64
+	IndexLookupNS   uint64
+	SearchNS        uint64
+	HitsNS          uint64
+	FallbackNS      uint64
+	HBCTotalNS      uint64
+	HBCRootLoadNS   uint64
+	HBCExpandNS     uint64
+	HBCLeafNS       uint64
+	HBCRerankNS     uint64
+	HBCRerankLoadNS uint64
+	HBCRerankDistNS uint64
+	HBCNodes        uint64
+	HBCLeaves       uint64
+	HBCReranked     uint64
+	HitCount        uint32
+	TotalHits       uint32
+	UsedFastPath    bool
+}
+
+func (b *Bridge) SearchDenseProfile(indexName string, vector []float32, k, limit, offset uint32) (DenseSearchProfile, error) {
+	if indexName == "" || len(vector) == 0 {
+		return DenseSearchProfile{}, ErrInvalidArgument
+	}
+
+	var profile C.AntflyDenseSearchProfile
+	var vecPtr *C.float
+	if len(vector) > 0 {
+		vecPtr = (*C.float)(unsafe.Pointer(&vector[0]))
+	}
+	if err := mapError(C.antfly_db_search_dense_profile(
+		b.handle,
+		toSlice([]byte(indexName)),
+		vecPtr,
+		C.size_t(len(vector)),
+		C.uint32_t(k),
+		C.uint32_t(limit),
+		C.uint32_t(offset),
+		&profile,
+	)); err != nil {
+		return DenseSearchProfile{}, err
+	}
+	return DenseSearchProfile{
+		TotalNS:         uint64(profile.total_ns),
+		IndexLookupNS:   uint64(profile.index_lookup_ns),
+		SearchNS:        uint64(profile.search_ns),
+		HitsNS:          uint64(profile.hits_ns),
+		FallbackNS:      uint64(profile.fallback_ns),
+		HBCTotalNS:      uint64(profile.hbc_total_ns),
+		HBCRootLoadNS:   uint64(profile.hbc_root_load_ns),
+		HBCExpandNS:     uint64(profile.hbc_child_expand_ns),
+		HBCLeafNS:       uint64(profile.hbc_leaf_score_ns),
+		HBCRerankNS:     uint64(profile.hbc_rerank_ns),
+		HBCRerankLoadNS: uint64(profile.hbc_rerank_vector_load_ns),
+		HBCRerankDistNS: uint64(profile.hbc_rerank_distance_ns),
+		HBCNodes:        uint64(profile.hbc_nodes_visited),
+		HBCLeaves:       uint64(profile.hbc_leaves_explored),
+		HBCReranked:     uint64(profile.hbc_reranked_vectors),
+		HitCount:        uint32(profile.hit_count),
+		TotalHits:       uint32(profile.total_hits),
+		UsedFastPath:    bool(profile.used_fast_path),
+	}, nil
 }
 
 func (b *Bridge) SearchDenseWireRaw(req []byte) ([]byte, error) {

@@ -542,6 +542,7 @@ func (ei *EmbeddingIndex) newVectorIndex(dimension int) (vectorindex.VectorIndex
 		SplitAlgo:        vector.ClustAlgorithm_Kmeans,
 		QuantizerSeed:    42,
 		UseQuantization:  true,
+		RerankPolicy:     vectorindex.RerankPolicyAlways,
 		Episilon2:        7,
 		BranchingFactor:  7 * 24,
 		LeafSize:         7 * 24,

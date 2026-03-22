@@ -85,6 +85,12 @@ func (c *queryVector) Transformed() vector.T {
 // NOTE: The Vector field must be populated in each candidate before calling
 // this method.
 func (c *queryVector) ComputeExactDistances(isLeaf bool, candidates []*Result) {
+	for i := range candidates {
+		c.ComputeExactDistance(isLeaf, candidates[i])
+	}
+}
+
+func (c *queryVector) ComputeExactDistance(isLeaf bool, candidate *Result) {
 	normalize := false
 	queryVector := c.transformed
 	queryNorm := float32(1)
@@ -112,27 +118,24 @@ func (c *queryVector) ComputeExactDistances(isLeaf bool, candidates []*Result) {
 		}
 	}
 
-	for i := range candidates {
-		candidate := candidates[i]
-		if normalize {
-			// Compute inner product distance and perform needed normalization.
-			candidate.Distance = vector.MeasureDistance(
-				vector.DistanceMetric_InnerProduct,
-				candidate.Vector,
-				queryVector,
-			)
-			product := queryNorm * vec.NormFloat32(candidate.Vector)
-			if product != 0 {
-				candidate.Distance /= product
-			}
-			if c.distanceMetric == vector.DistanceMetric_Cosine {
-				// Cosine distance for normalized vectors is 1 - (query ⋅ data).
-				// We've computed the negative inner product, so just add one.
-				candidate.Distance++
-			}
-		} else {
-			candidate.Distance = vector.MeasureDistance(c.distanceMetric, candidate.Vector, queryVector)
+	if normalize {
+		// Compute inner product distance and perform needed normalization.
+		candidate.Distance = vector.MeasureDistance(
+			vector.DistanceMetric_InnerProduct,
+			candidate.Vector,
+			queryVector,
+		)
+		product := queryNorm * vec.NormFloat32(candidate.Vector)
+		if product != 0 {
+			candidate.Distance /= product
 		}
-		candidate.ErrorBound = 0
+		if c.distanceMetric == vector.DistanceMetric_Cosine {
+			// Cosine distance for normalized vectors is 1 - (query ⋅ data).
+			// We've computed the negative inner product, so just add one.
+			candidate.Distance++
+		}
+	} else {
+		candidate.Distance = vector.MeasureDistance(c.distanceMetric, candidate.Vector, queryVector)
 	}
+	candidate.ErrorBound = 0
 }

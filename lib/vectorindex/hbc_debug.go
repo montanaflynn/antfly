@@ -6,9 +6,34 @@ import (
 	"math/rand/v2"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 
 	"github.com/cockroachdb/pebble/v2"
 )
+
+type HBCDebugSearchProfile struct {
+	RerankedVectors    uint64
+	RerankVectorLoadNS uint64
+	RerankDistanceNS   uint64
+}
+
+var lastHBCDebugRerankedVectors atomic.Uint64
+var lastHBCDebugRerankVectorLoadNS atomic.Uint64
+var lastHBCDebugRerankDistanceNS atomic.Uint64
+
+func recordHBCDebugSearchProfile(profile HBCDebugSearchProfile) {
+	lastHBCDebugRerankedVectors.Store(profile.RerankedVectors)
+	lastHBCDebugRerankVectorLoadNS.Store(profile.RerankVectorLoadNS)
+	lastHBCDebugRerankDistanceNS.Store(profile.RerankDistanceNS)
+}
+
+func LastHBCDebugSearchProfile() HBCDebugSearchProfile {
+	return HBCDebugSearchProfile{
+		RerankedVectors:    lastHBCDebugRerankedVectors.Load(),
+		RerankVectorLoadNS: lastHBCDebugRerankVectorLoadNS.Load(),
+		RerankDistanceNS:   lastHBCDebugRerankDistanceNS.Load(),
+	}
+}
 
 type HBCDebugNode struct {
 	ID       uint64    `json:"id"`

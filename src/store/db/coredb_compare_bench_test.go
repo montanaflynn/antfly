@@ -11,6 +11,7 @@ import (
 	"github.com/antflydb/antfly/lib/schema"
 	"github.com/antflydb/antfly/lib/types"
 	"github.com/antflydb/antfly/lib/vector"
+	"github.com/antflydb/antfly/lib/vectorindex"
 	json "github.com/antflydb/antfly/pkg/libaf/json"
 	"github.com/antflydb/antfly/src/store/db/indexes"
 	"github.com/blevesearch/bleve/v2"
@@ -118,13 +119,15 @@ func benchmarkVectorValues(i, dim int) []float32 {
 	return values
 }
 
-func benchmarkVectorDocJSON(i int, dim int) []byte {
+func benchmarkDenseDocJSON(indexName string, i int, dim int) []byte {
 	doc := map[string]any{
-		"title":     fmt.Sprintf("vector %06d", i),
-		"content":   fmt.Sprintf("vector benchmark token %06d", i),
-		"category":  fmt.Sprintf("vec-%02d", i%8),
-		"score":     float64(i % 100),
-		"embedding": benchmarkVectorValues(i, dim),
+		"title":    fmt.Sprintf("vector %06d", i),
+		"content":  fmt.Sprintf("vector benchmark token %06d", i),
+		"category": fmt.Sprintf("vec-%02d", i%8),
+		"score":    float64(i % 100),
+		"_embeddings": map[string]any{
+			indexName: benchmarkVectorValues(i, dim),
+		},
 	}
 	buf, err := json.Marshal(doc)
 	if err != nil {
@@ -328,7 +331,7 @@ func BenchmarkCoreDBBackends(b *testing.B) {
 					DistanceMetric: indexes.DistanceMetricL2Squared,
 				}))
 				requireSeedDocs(b, db, vectorCase.count, Op_SyncLevelEmbeddings, func(i int) []byte {
-					return benchmarkVectorDocJSON(i, vectorCase.dim)
+					return benchmarkDenseDocJSON("dense_idx", i, vectorCase.dim)
 				})
 
 				req := &indexes.RemoteIndexSearchRequest{
@@ -359,6 +362,292 @@ func BenchmarkCoreDBBackends(b *testing.B) {
 					}
 				}
 			})
+
+			if backend.name == "zig" {
+				b.Run(backend.name+"/DenseCallNoop/"+vectorCase.name, func(b *testing.B) {
+					db := backend.open(b, tableSchema)
+					zigDB := db.(*ZigCoreDB)
+
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						if err := zigDB.bridge.DenseNoop(); err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+
+				b.Run(backend.name+"/DenseCallFixedPacked/"+vectorCase.name, func(b *testing.B) {
+					db := backend.open(b, tableSchema)
+					zigDB := db.(*ZigCoreDB)
+
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						if _, err := zigDB.bridge.DenseFixedPackedResult("dense_idx"); err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+
+				b.Run(backend.name+"/DenseVectorSearchProfile/"+vectorCase.name, func(b *testing.B) {
+					db := backend.open(b, tableSchema)
+					requireAddIndex(b, db, *indexes.NewFullTextIndexConfig("full_text_index", false))
+					requireAddIndex(b, db, *indexes.NewEmbeddingsConfig("dense_idx", indexes.EmbeddingsIndexConfig{
+						Field:          "embedding",
+						Dimension:      vectorCase.dim,
+						DistanceMetric: indexes.DistanceMetricL2Squared,
+					}))
+					requireSeedDocs(b, db, vectorCase.count, Op_SyncLevelEmbeddings, func(i int) []byte {
+						return benchmarkDenseDocJSON("dense_idx", i, vectorCase.dim)
+					})
+
+					zigDB := db.(*ZigCoreDB)
+					vectorQuery := benchmarkVectorValues(0, vectorCase.dim)
+					var totalNS uint64
+					var lookupNS uint64
+					var searchNS uint64
+					var hitsNS uint64
+					var fallbackNS uint64
+
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						profile, err := zigDB.bridge.SearchDenseProfile("dense_idx", vectorQuery, 10, 10, 0)
+						if err != nil {
+							b.Fatal(err)
+						}
+						totalNS += profile.TotalNS
+						lookupNS += profile.IndexLookupNS
+						searchNS += profile.SearchNS
+						hitsNS += profile.HitsNS
+						fallbackNS += profile.FallbackNS
+					}
+					if b.N > 0 {
+						denom := float64(b.N)
+						b.ReportMetric(float64(totalNS)/denom, "zig_total_ns/op")
+						b.ReportMetric(float64(lookupNS)/denom, "zig_lookup_ns/op")
+						b.ReportMetric(float64(searchNS)/denom, "zig_search_ns/op")
+						b.ReportMetric(float64(hitsNS)/denom, "zig_hits_ns/op")
+						b.ReportMetric(float64(fallbackNS)/denom, "zig_fallback_ns/op")
+					}
+				})
+
+				b.Run(backend.name+"/DenseVectorSearchBridge/"+vectorCase.name, func(b *testing.B) {
+					db := backend.open(b, tableSchema)
+					requireAddIndex(b, db, *indexes.NewFullTextIndexConfig("full_text_index", false))
+					requireAddIndex(b, db, *indexes.NewEmbeddingsConfig("dense_idx", indexes.EmbeddingsIndexConfig{
+						Field:          "embedding",
+						Dimension:      vectorCase.dim,
+						DistanceMetric: indexes.DistanceMetricL2Squared,
+					}))
+					requireSeedDocs(b, db, vectorCase.count, Op_SyncLevelEmbeddings, func(i int) []byte {
+						return benchmarkDenseDocJSON("dense_idx", i, vectorCase.dim)
+					})
+
+					zigDB := db.(*ZigCoreDB)
+					reqBytes := encodeSearchWireDenseRequest("dense_idx", benchmarkVectorValues(0, vectorCase.dim), 10, 10, 0)
+
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						if _, err := zigDB.bridge.SearchDenseWireRaw(reqBytes); err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+
+				b.Run(backend.name+"/DenseVectorSearchBridgePacked/"+vectorCase.name, func(b *testing.B) {
+					db := backend.open(b, tableSchema)
+					requireAddIndex(b, db, *indexes.NewFullTextIndexConfig("full_text_index", false))
+					requireAddIndex(b, db, *indexes.NewEmbeddingsConfig("dense_idx", indexes.EmbeddingsIndexConfig{
+						Field:          "embedding",
+						Dimension:      vectorCase.dim,
+						DistanceMetric: indexes.DistanceMetricL2Squared,
+					}))
+					requireSeedDocs(b, db, vectorCase.count, Op_SyncLevelEmbeddings, func(i int) []byte {
+						return benchmarkDenseDocJSON("dense_idx", i, vectorCase.dim)
+					})
+
+					zigDB := db.(*ZigCoreDB)
+					vectorQuery := benchmarkVectorValues(0, vectorCase.dim)
+
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						if _, err := zigDB.bridge.SearchDenseResult("dense_idx", vectorQuery, 10, 10, 0); err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+
+				b.Run(backend.name+"/DenseVectorSearchFastPath/"+vectorCase.name, func(b *testing.B) {
+					db := backend.open(b, tableSchema)
+					requireAddIndex(b, db, *indexes.NewFullTextIndexConfig("full_text_index", false))
+					requireAddIndex(b, db, *indexes.NewEmbeddingsConfig("dense_idx", indexes.EmbeddingsIndexConfig{
+						Field:          "embedding",
+						Dimension:      vectorCase.dim,
+						DistanceMetric: indexes.DistanceMetricL2Squared,
+					}))
+					requireSeedDocs(b, db, vectorCase.count, Op_SyncLevelEmbeddings, func(i int) []byte {
+						return benchmarkDenseDocJSON("dense_idx", i, vectorCase.dim)
+					})
+
+					zigDB := db.(*ZigCoreDB)
+					reqBytes := encodeSearchWireDenseRequest("dense_idx", benchmarkVectorValues(0, vectorCase.dim), 10, 10, 0)
+					ctx := context.Background()
+
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						if _, err := zigDB.searchWireFastPath(ctx, zigDB.bridge, reqBytes, searchWireOpDenseKnn); err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+			}
 		}
+	}
+}
+
+func BenchmarkZigDenseVectorSearchProfile(b *testing.B) {
+	tableSchema := benchmarkSchema()
+	backend := benchmarkBackend{
+		name: "zig",
+		open: func(b *testing.B, tableSchema *schema.TableSchema) DB {
+			b.Helper()
+			db := NewZigCoreDB(zap.NewNop(), nil, tableSchema, map[string]indexes.IndexConfig{}, nil, nil, nil)
+			requireOpenBenchmarkDB(b, db, tableSchema)
+			return db
+		},
+	}
+
+	for _, vectorCase := range benchmarkVectorCases() {
+		vectorCase := vectorCase
+		b.Run(vectorCase.name, func(b *testing.B) {
+			db := backend.open(b, tableSchema)
+			requireAddIndex(b, db, *indexes.NewFullTextIndexConfig("full_text_index", false))
+			requireAddIndex(b, db, *indexes.NewEmbeddingsConfig("dense_idx", indexes.EmbeddingsIndexConfig{
+				Field:          "embedding",
+				Dimension:      vectorCase.dim,
+				DistanceMetric: indexes.DistanceMetricL2Squared,
+			}))
+			requireSeedDocs(b, db, vectorCase.count, Op_SyncLevelEmbeddings, func(i int) []byte {
+				return benchmarkDenseDocJSON("dense_idx", i, vectorCase.dim)
+			})
+
+			zigDB := db.(*ZigCoreDB)
+			vectorQuery := benchmarkVectorValues(0, vectorCase.dim)
+			var totalNS uint64
+			var lookupNS uint64
+			var searchNS uint64
+			var hitsNS uint64
+			var fallbackNS uint64
+			var hbcTotalNS uint64
+			var hbcRootNS uint64
+			var hbcExpandNS uint64
+			var hbcLeafNS uint64
+			var hbcRerankNS uint64
+			var hbcRerankLoadNS uint64
+			var hbcRerankDistNS uint64
+			var hbcNodes uint64
+			var hbcLeaves uint64
+			var hbcReranked uint64
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				profile, err := zigDB.bridge.SearchDenseProfile("dense_idx", vectorQuery, 10, 10, 0)
+				if err != nil {
+					b.Fatal(err)
+				}
+				totalNS += profile.TotalNS
+				lookupNS += profile.IndexLookupNS
+				searchNS += profile.SearchNS
+				hitsNS += profile.HitsNS
+				fallbackNS += profile.FallbackNS
+				hbcTotalNS += profile.HBCTotalNS
+				hbcRootNS += profile.HBCRootLoadNS
+				hbcExpandNS += profile.HBCExpandNS
+				hbcLeafNS += profile.HBCLeafNS
+				hbcRerankNS += profile.HBCRerankNS
+				hbcRerankLoadNS += profile.HBCRerankLoadNS
+				hbcRerankDistNS += profile.HBCRerankDistNS
+				hbcNodes += profile.HBCNodes
+				hbcLeaves += profile.HBCLeaves
+				hbcReranked += profile.HBCReranked
+			}
+			if b.N > 0 {
+				denom := float64(b.N)
+				b.ReportMetric(float64(totalNS)/denom, "zig_total_ns/op")
+				b.ReportMetric(float64(lookupNS)/denom, "zig_lookup_ns/op")
+				b.ReportMetric(float64(searchNS)/denom, "zig_search_ns/op")
+				b.ReportMetric(float64(hitsNS)/denom, "zig_hits_ns/op")
+				b.ReportMetric(float64(fallbackNS)/denom, "zig_fallback_ns/op")
+				b.ReportMetric(float64(hbcTotalNS)/denom, "zig_hbc_total_ns/op")
+				b.ReportMetric(float64(hbcRootNS)/denom, "zig_hbc_root_ns/op")
+				b.ReportMetric(float64(hbcExpandNS)/denom, "zig_hbc_expand_ns/op")
+				b.ReportMetric(float64(hbcLeafNS)/denom, "zig_hbc_leaf_ns/op")
+				b.ReportMetric(float64(hbcRerankNS)/denom, "zig_hbc_rerank_ns/op")
+				b.ReportMetric(float64(hbcRerankLoadNS)/denom, "zig_hbc_rerank_load_ns/op")
+				b.ReportMetric(float64(hbcRerankDistNS)/denom, "zig_hbc_rerank_dist_ns/op")
+				b.ReportMetric(float64(hbcNodes)/denom, "zig_hbc_nodes/op")
+				b.ReportMetric(float64(hbcLeaves)/denom, "zig_hbc_leaves/op")
+				b.ReportMetric(float64(hbcReranked)/denom, "zig_hbc_reranked/op")
+			}
+		})
+	}
+}
+
+func BenchmarkGoDenseVectorSearchProfile(b *testing.B) {
+	tableSchema := benchmarkSchema()
+
+	for _, vectorCase := range benchmarkVectorCases() {
+		vectorCase := vectorCase
+		b.Run(vectorCase.name, func(b *testing.B) {
+			db := NewDBImpl(zap.NewNop(), nil, tableSchema, map[string]indexes.IndexConfig{}, nil, nil, nil)
+			requireOpenBenchmarkDB(b, db, tableSchema)
+			requireAddIndex(b, db, *indexes.NewFullTextIndexConfig("full_text_index", false))
+			requireAddIndex(b, db, *indexes.NewEmbeddingsConfig("dense_idx", indexes.EmbeddingsIndexConfig{
+				Field:          "embedding",
+				Dimension:      vectorCase.dim,
+				DistanceMetric: indexes.DistanceMetricL2Squared,
+			}))
+			requireSeedDocs(b, db, vectorCase.count, Op_SyncLevelEmbeddings, func(i int) []byte {
+				return benchmarkDenseDocJSON("dense_idx", i, vectorCase.dim)
+			})
+
+			req := &indexes.RemoteIndexSearchRequest{
+				VectorSearches: map[string]vector.T{
+					"dense_idx": benchmarkVectorValues(0, vectorCase.dim),
+				},
+				Limit: 10,
+			}
+			reqBytes, err := json.Marshal(req)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			var reranked uint64
+			var rerankLoadNS uint64
+			var rerankDistNS uint64
+			ctx := context.Background()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := db.Search(ctx, reqBytes); err != nil {
+					b.Fatal(err)
+				}
+				profile := vectorindex.LastHBCDebugSearchProfile()
+				reranked += profile.RerankedVectors
+				rerankLoadNS += profile.RerankVectorLoadNS
+				rerankDistNS += profile.RerankDistanceNS
+			}
+			if b.N > 0 {
+				b.ReportMetric(float64(reranked)/float64(b.N), "go_hbc_reranked/op")
+				b.ReportMetric(float64(rerankLoadNS)/float64(b.N), "go_hbc_rerank_load_ns/op")
+				b.ReportMetric(float64(rerankDistNS)/float64(b.N), "go_hbc_rerank_dist_ns/op")
+			}
+		})
 	}
 }
