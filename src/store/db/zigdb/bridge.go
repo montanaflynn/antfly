@@ -51,7 +51,12 @@ typedef struct {
 	uint64_t hits_ns;
 	uint64_t fallback_ns;
 	uint64_t hbc_total_ns;
+	uint64_t hbc_setup_ns;
 	uint64_t hbc_root_load_ns;
+	uint64_t hbc_node_cache_miss_ns;
+	uint64_t hbc_node_cache_misses;
+	uint64_t hbc_quantized_cache_miss_ns;
+	uint64_t hbc_quantized_cache_misses;
 	uint64_t hbc_child_expand_ns;
 	uint64_t hbc_leaf_score_ns;
 	uint64_t hbc_rerank_ns;
@@ -64,6 +69,33 @@ typedef struct {
 	uint32_t total_hits;
 	_Bool used_fast_path;
 } AntflyDenseSearchProfile;
+
+typedef struct {
+	uint64_t total_ns;
+	uint64_t decode_ns;
+	uint64_t search_ns;
+	uint64_t resolve_ns;
+	uint64_t encode_ns;
+	uint64_t fallback_ns;
+	uint64_t hbc_total_ns;
+	uint64_t hbc_setup_ns;
+	uint64_t hbc_root_load_ns;
+	uint64_t hbc_node_cache_miss_ns;
+	uint64_t hbc_node_cache_misses;
+	uint64_t hbc_quantized_cache_miss_ns;
+	uint64_t hbc_quantized_cache_misses;
+	uint64_t hbc_child_expand_ns;
+	uint64_t hbc_leaf_score_ns;
+	uint64_t hbc_rerank_ns;
+	uint64_t hbc_rerank_vector_load_ns;
+	uint64_t hbc_rerank_distance_ns;
+	uint64_t hbc_nodes_visited;
+	uint64_t hbc_leaves_explored;
+	uint64_t hbc_reranked_vectors;
+	uint32_t hit_count;
+	uint32_t total_hits;
+	_Bool used_fast_path;
+} AntflyDenseWireSearchProfile;
 
 typedef struct {
 	uint8_t* id_ptr;
@@ -116,6 +148,7 @@ AntflyErrorCode antfly_db_search_dense_profile(void* handle, AntflySlice index_n
 AntflyErrorCode antfly_db_dense_noop(void* handle);
 AntflyErrorCode antfly_db_dense_fixed_packed_result(void* handle, AntflyPackedDenseSearchResult* out_result);
 AntflyErrorCode antfly_db_search_dense_wire(void* handle, AntflySlice request_buf, AntflyBuffer* out_buf);
+AntflyErrorCode antfly_db_search_dense_wire_profile(void* handle, AntflySlice request_buf, AntflyBuffer* out_buf, AntflyDenseWireSearchProfile* out_profile);
 AntflyErrorCode antfly_db_search_text_match_wire(void* handle, AntflySlice request_buf, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_search_text_term_wire(void* handle, AntflySlice request_buf, AntflyBuffer* out_buf);
 AntflyErrorCode antfly_db_search_text_match_phrase_wire(void* handle, AntflySlice request_buf, AntflyBuffer* out_buf);
@@ -1238,7 +1271,39 @@ type DenseSearchProfile struct {
 	HitsNS          uint64
 	FallbackNS      uint64
 	HBCTotalNS      uint64
+	HBCSetupNS      uint64
 	HBCRootLoadNS   uint64
+	HBCNodeMissNS   uint64
+	HBCNodeMisses   uint64
+	HBCQuantMissNS  uint64
+	HBCQuantMisses  uint64
+	HBCExpandNS     uint64
+	HBCLeafNS       uint64
+	HBCRerankNS     uint64
+	HBCRerankLoadNS uint64
+	HBCRerankDistNS uint64
+	HBCNodes        uint64
+	HBCLeaves       uint64
+	HBCReranked     uint64
+	HitCount        uint32
+	TotalHits       uint32
+	UsedFastPath    bool
+}
+
+type DenseWireSearchProfile struct {
+	TotalNS         uint64
+	DecodeNS        uint64
+	SearchNS        uint64
+	ResolveNS       uint64
+	EncodeNS        uint64
+	FallbackNS      uint64
+	HBCTotalNS      uint64
+	HBCSetupNS      uint64
+	HBCRootLoadNS   uint64
+	HBCNodeMissNS   uint64
+	HBCNodeMisses   uint64
+	HBCQuantMissNS  uint64
+	HBCQuantMisses  uint64
 	HBCExpandNS     uint64
 	HBCLeafNS       uint64
 	HBCRerankNS     uint64
@@ -1281,7 +1346,12 @@ func (b *Bridge) SearchDenseProfile(indexName string, vector []float32, k, limit
 		HitsNS:          uint64(profile.hits_ns),
 		FallbackNS:      uint64(profile.fallback_ns),
 		HBCTotalNS:      uint64(profile.hbc_total_ns),
+		HBCSetupNS:      uint64(profile.hbc_setup_ns),
 		HBCRootLoadNS:   uint64(profile.hbc_root_load_ns),
+		HBCNodeMissNS:   uint64(profile.hbc_node_cache_miss_ns),
+		HBCNodeMisses:   uint64(profile.hbc_node_cache_misses),
+		HBCQuantMissNS:  uint64(profile.hbc_quantized_cache_miss_ns),
+		HBCQuantMisses:  uint64(profile.hbc_quantized_cache_misses),
 		HBCExpandNS:     uint64(profile.hbc_child_expand_ns),
 		HBCLeafNS:       uint64(profile.hbc_leaf_score_ns),
 		HBCRerankNS:     uint64(profile.hbc_rerank_ns),
@@ -1303,6 +1373,41 @@ func (b *Bridge) SearchDenseWireRaw(req []byte) ([]byte, error) {
 	}
 	defer C.antfly_db_buffer_free(out.ptr, out.len)
 	return C.GoBytes(unsafe.Pointer(out.ptr), C.int(out.len)), nil
+}
+
+func (b *Bridge) SearchDenseWireProfile(req []byte) ([]byte, DenseWireSearchProfile, error) {
+	var out C.AntflyBuffer
+	var profile C.AntflyDenseWireSearchProfile
+	if err := mapError(C.antfly_db_search_dense_wire_profile(b.handle, toSlice(req), &out, &profile)); err != nil {
+		return nil, DenseWireSearchProfile{}, err
+	}
+	defer C.antfly_db_buffer_free(out.ptr, out.len)
+	return C.GoBytes(unsafe.Pointer(out.ptr), C.int(out.len)), DenseWireSearchProfile{
+		TotalNS:         uint64(profile.total_ns),
+		DecodeNS:        uint64(profile.decode_ns),
+		SearchNS:        uint64(profile.search_ns),
+		ResolveNS:       uint64(profile.resolve_ns),
+		EncodeNS:        uint64(profile.encode_ns),
+		FallbackNS:      uint64(profile.fallback_ns),
+		HBCTotalNS:      uint64(profile.hbc_total_ns),
+		HBCSetupNS:      uint64(profile.hbc_setup_ns),
+		HBCRootLoadNS:   uint64(profile.hbc_root_load_ns),
+		HBCNodeMissNS:   uint64(profile.hbc_node_cache_miss_ns),
+		HBCNodeMisses:   uint64(profile.hbc_node_cache_misses),
+		HBCQuantMissNS:  uint64(profile.hbc_quantized_cache_miss_ns),
+		HBCQuantMisses:  uint64(profile.hbc_quantized_cache_misses),
+		HBCExpandNS:     uint64(profile.hbc_child_expand_ns),
+		HBCLeafNS:       uint64(profile.hbc_leaf_score_ns),
+		HBCRerankNS:     uint64(profile.hbc_rerank_ns),
+		HBCRerankLoadNS: uint64(profile.hbc_rerank_vector_load_ns),
+		HBCRerankDistNS: uint64(profile.hbc_rerank_distance_ns),
+		HBCNodes:        uint64(profile.hbc_nodes_visited),
+		HBCLeaves:       uint64(profile.hbc_leaves_explored),
+		HBCReranked:     uint64(profile.hbc_reranked_vectors),
+		HitCount:        uint32(profile.hit_count),
+		TotalHits:       uint32(profile.total_hits),
+		UsedFastPath:    bool(profile.used_fast_path),
+	}, nil
 }
 
 func encodeDenseSearchWireRequest(indexName string, vector []float32, k, limit, offset uint32) []byte {

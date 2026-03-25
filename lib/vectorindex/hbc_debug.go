@@ -12,16 +12,81 @@ import (
 )
 
 type HBCDebugSearchProfile struct {
-	RerankedVectors    uint64
-	RerankVectorLoadNS uint64
-	RerankDistanceNS   uint64
+	TotalNS              uint64
+	RootLoadNS           uint64
+	NodeCacheMissNS      uint64
+	NodeCacheMisses      uint64
+	QuantizedCacheMissNS uint64
+	QuantizedCacheMisses uint64
+	ChildExpandNS        uint64
+	LeafScoreNS          uint64
+	ApproxFillPushes     uint64
+	ApproxRejects        uint64
+	ApproxCloserPushes   uint64
+	ApproxMaybePushes    uint64
+	ApproxDefinitePops   uint64
+	ApproxTrimPops       uint64
+	NodesVisited         uint64
+	LeavesExplored       uint64
+	ApproxNodesExpanded  uint64
+	ApproxLeavesScored   uint64
+	ApproxVectorsScored  uint64
+	ExactVectorsScored   uint64
+	RerankedVectors      uint64
+	RerankVectorLoadNS   uint64
+	RerankDistanceNS     uint64
 }
 
+var lastHBCDebugTotalNS atomic.Uint64
+var lastHBCDebugRootLoadNS atomic.Uint64
+var lastHBCDebugNodeCacheMissNS atomic.Uint64
+var lastHBCDebugNodeCacheMisses atomic.Uint64
+var lastHBCDebugQuantizedCacheMissNS atomic.Uint64
+var lastHBCDebugQuantizedCacheMisses atomic.Uint64
+var lastHBCDebugChildExpandNS atomic.Uint64
+var lastHBCDebugLeafScoreNS atomic.Uint64
+var lastHBCDebugApproxFillPushes atomic.Uint64
+var lastHBCDebugApproxRejects atomic.Uint64
+var lastHBCDebugApproxCloserPushes atomic.Uint64
+var lastHBCDebugApproxMaybePushes atomic.Uint64
+var lastHBCDebugApproxDefinitePops atomic.Uint64
+var lastHBCDebugApproxTrimPops atomic.Uint64
+var lastHBCDebugNodesVisited atomic.Uint64
+var lastHBCDebugLeavesExplored atomic.Uint64
+var lastHBCDebugApproxNodesExpanded atomic.Uint64
+var lastHBCDebugApproxLeavesScored atomic.Uint64
+var lastHBCDebugApproxVectorsScored atomic.Uint64
+var lastHBCDebugExactVectorsScored atomic.Uint64
 var lastHBCDebugRerankedVectors atomic.Uint64
 var lastHBCDebugRerankVectorLoadNS atomic.Uint64
 var lastHBCDebugRerankDistanceNS atomic.Uint64
 
+var hbcDebugNodeCacheMissNS atomic.Uint64
+var hbcDebugNodeCacheMisses atomic.Uint64
+var hbcDebugQuantizedCacheMissNS atomic.Uint64
+var hbcDebugQuantizedCacheMisses atomic.Uint64
+
 func recordHBCDebugSearchProfile(profile HBCDebugSearchProfile) {
+	lastHBCDebugTotalNS.Store(profile.TotalNS)
+	lastHBCDebugRootLoadNS.Store(profile.RootLoadNS)
+	lastHBCDebugNodeCacheMissNS.Store(profile.NodeCacheMissNS)
+	lastHBCDebugNodeCacheMisses.Store(profile.NodeCacheMisses)
+	lastHBCDebugQuantizedCacheMissNS.Store(profile.QuantizedCacheMissNS)
+	lastHBCDebugQuantizedCacheMisses.Store(profile.QuantizedCacheMisses)
+	lastHBCDebugChildExpandNS.Store(profile.ChildExpandNS)
+	lastHBCDebugLeafScoreNS.Store(profile.LeafScoreNS)
+	lastHBCDebugApproxFillPushes.Store(profile.ApproxFillPushes)
+	lastHBCDebugApproxRejects.Store(profile.ApproxRejects)
+	lastHBCDebugApproxCloserPushes.Store(profile.ApproxCloserPushes)
+	lastHBCDebugApproxMaybePushes.Store(profile.ApproxMaybePushes)
+	lastHBCDebugApproxDefinitePops.Store(profile.ApproxDefinitePops)
+	lastHBCDebugApproxTrimPops.Store(profile.ApproxTrimPops)
+	lastHBCDebugNodesVisited.Store(profile.NodesVisited)
+	lastHBCDebugLeavesExplored.Store(profile.LeavesExplored)
+	lastHBCDebugApproxNodesExpanded.Store(profile.ApproxNodesExpanded)
+	lastHBCDebugApproxLeavesScored.Store(profile.ApproxLeavesScored)
+	lastHBCDebugApproxVectorsScored.Store(profile.ApproxVectorsScored)
+	lastHBCDebugExactVectorsScored.Store(profile.ExactVectorsScored)
 	lastHBCDebugRerankedVectors.Store(profile.RerankedVectors)
 	lastHBCDebugRerankVectorLoadNS.Store(profile.RerankVectorLoadNS)
 	lastHBCDebugRerankDistanceNS.Store(profile.RerankDistanceNS)
@@ -29,9 +94,29 @@ func recordHBCDebugSearchProfile(profile HBCDebugSearchProfile) {
 
 func LastHBCDebugSearchProfile() HBCDebugSearchProfile {
 	return HBCDebugSearchProfile{
-		RerankedVectors:    lastHBCDebugRerankedVectors.Load(),
-		RerankVectorLoadNS: lastHBCDebugRerankVectorLoadNS.Load(),
-		RerankDistanceNS:   lastHBCDebugRerankDistanceNS.Load(),
+		TotalNS:              lastHBCDebugTotalNS.Load(),
+		RootLoadNS:           lastHBCDebugRootLoadNS.Load(),
+		NodeCacheMissNS:      lastHBCDebugNodeCacheMissNS.Load(),
+		NodeCacheMisses:      lastHBCDebugNodeCacheMisses.Load(),
+		QuantizedCacheMissNS: lastHBCDebugQuantizedCacheMissNS.Load(),
+		QuantizedCacheMisses: lastHBCDebugQuantizedCacheMisses.Load(),
+		ChildExpandNS:        lastHBCDebugChildExpandNS.Load(),
+		LeafScoreNS:          lastHBCDebugLeafScoreNS.Load(),
+		ApproxFillPushes:     lastHBCDebugApproxFillPushes.Load(),
+		ApproxRejects:        lastHBCDebugApproxRejects.Load(),
+		ApproxCloserPushes:   lastHBCDebugApproxCloserPushes.Load(),
+		ApproxMaybePushes:    lastHBCDebugApproxMaybePushes.Load(),
+		ApproxDefinitePops:   lastHBCDebugApproxDefinitePops.Load(),
+		ApproxTrimPops:       lastHBCDebugApproxTrimPops.Load(),
+		NodesVisited:         lastHBCDebugNodesVisited.Load(),
+		LeavesExplored:       lastHBCDebugLeavesExplored.Load(),
+		ApproxNodesExpanded:  lastHBCDebugApproxNodesExpanded.Load(),
+		ApproxLeavesScored:   lastHBCDebugApproxLeavesScored.Load(),
+		ApproxVectorsScored:  lastHBCDebugApproxVectorsScored.Load(),
+		ExactVectorsScored:   lastHBCDebugExactVectorsScored.Load(),
+		RerankedVectors:      lastHBCDebugRerankedVectors.Load(),
+		RerankVectorLoadNS:   lastHBCDebugRerankVectorLoadNS.Load(),
+		RerankDistanceNS:     lastHBCDebugRerankDistanceNS.Load(),
 	}
 }
 

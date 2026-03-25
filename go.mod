@@ -24,8 +24,8 @@ replace github.com/tidwall/wal => github.com/ajroetker/wal v0.0.0-antfly000
 replace github.com/dprotaso/go-yit v0.0.0-20250909171706-0a81c39169bc => github.com/dprotaso/go-yit v0.0.0-20250513224043-18a80f8f6df4
 
 replace (
-	github.com/gomlx/gomlx => github.com/ajroetker/gomlx v0.0.0-antfly010
-	github.com/gomlx/onnx-gomlx => github.com/ajroetker/onnx-gomlx v0.0.0-antfly010
+	github.com/gomlx/gomlx => github.com/ajroetker/gomlx v0.0.0-antfly011
+	github.com/gomlx/onnx-gomlx => github.com/ajroetker/onnx-gomlx v0.0.0-antfly011
 	github.com/knights-analytics/ortgenai => github.com/ajroetker/ortgenai v0.1.1-antfly002
 	github.com/kovidgoyal/imaging => github.com/antflydb/imaging v1.8.21-antfly001
 )

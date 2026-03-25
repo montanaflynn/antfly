@@ -169,10 +169,10 @@ github.com/ajroetker/go-highway v0.0.13-0.20260309234436-8d249c4caa48 h1:Q7rlCp0
 github.com/ajroetker/go-highway v0.0.13-0.20260309234436-8d249c4caa48/go.mod h1:un7fcrwix7UOHJrr18Lgh5eeF+1yaZiGWdTw3FbfDv4=
 github.com/ajroetker/go-jpeg2000 v0.0.2 h1:ni8brffZrci4Kacx3nM5d92ipmTDfak84KgHYi6IxFw=
 github.com/ajroetker/go-jpeg2000 v0.0.2/go.mod h1:7ld88W47lZy0x8gRQesRGAonDPOpr6ev8rckjCAfbzE=
-github.com/ajroetker/gomlx v0.0.0-antfly010 h1:wUeIEG8vWZnYkV12nG/EEtqf7/GWiDPfg6pWxlFuwXE=
-github.com/ajroetker/gomlx v0.0.0-antfly010/go.mod h1:gL8GQm+L7apNm8eRUI3sW1T2Jn//PRtlTK6ap3gF7Ck=
-github.com/ajroetker/onnx-gomlx v0.0.0-antfly010 h1:BgQep82GpgVsPZWUwGpSutxX+S+SZeKffYXWXTyssHU=
-github.com/ajroetker/onnx-gomlx v0.0.0-antfly010/go.mod h1:sZAFeB2UOyHQSoK1dtNfWF9AXC4WJEieYDMzqjc4lB0=
+github.com/ajroetker/gomlx v0.0.0-antfly011 h1:t0BZSBrYuJIwTiZplB9vxsVQy6OaP8+pMjCHaWUI3iY=
+github.com/ajroetker/gomlx v0.0.0-antfly011/go.mod h1:gL8GQm+L7apNm8eRUI3sW1T2Jn//PRtlTK6ap3gF7Ck=
+github.com/ajroetker/onnx-gomlx v0.0.0-antfly011 h1:2SdPZc9GqEGrokU99aRumlpiREoUpvT9BRRzzjtCZNM=
+github.com/ajroetker/onnx-gomlx v0.0.0-antfly011/go.mod h1:sZAFeB2UOyHQSoK1dtNfWF9AXC4WJEieYDMzqjc4lB0=
 github.com/ajroetker/ortgenai v0.1.1-antfly002 h1:NBD37hPSVeDIZBkchJqzjQ6qYIxgtG7bispR3O52jXk=
 github.com/ajroetker/ortgenai v0.1.1-antfly002/go.mod h1:NsxP23iC77IP6q+gRTC+v79v3hyv7fKH1iSa7D+DoVk=
 github.com/ajroetker/pdf v0.0.1-antfly001 h1:JgcAMws679mfo77qPU+qXVpCd45e2Fe2wckpEJRfKrI=

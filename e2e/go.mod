@@ -21,8 +21,8 @@ replace github.com/blevesearch/bleve/v2 => github.com/antflydb/bleve/v2 v2.5.8-a
 replace github.com/tidwall/wal => github.com/ajroetker/wal v0.0.0-antfly000
 
 replace (
-	github.com/gomlx/gomlx => github.com/ajroetker/gomlx v0.0.0-antfly010
-	github.com/gomlx/onnx-gomlx => github.com/ajroetker/onnx-gomlx v0.0.0-antfly010
+	github.com/gomlx/gomlx => github.com/ajroetker/gomlx v0.0.0-antfly011
+	github.com/gomlx/onnx-gomlx => github.com/ajroetker/onnx-gomlx v0.0.0-antfly011
 	github.com/knights-analytics/ortgenai => github.com/ajroetker/ortgenai v0.1.1-antfly002
 )
 

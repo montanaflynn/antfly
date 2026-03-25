@@ -544,7 +544,10 @@ func BenchmarkZigDenseVectorSearchProfile(b *testing.B) {
 			var hitsNS uint64
 			var fallbackNS uint64
 			var hbcTotalNS uint64
+			var hbcSetupNS uint64
 			var hbcRootNS uint64
+			var hbcNodeMissNS uint64
+			var hbcQuantMissNS uint64
 			var hbcExpandNS uint64
 			var hbcLeafNS uint64
 			var hbcRerankNS uint64
@@ -567,7 +570,10 @@ func BenchmarkZigDenseVectorSearchProfile(b *testing.B) {
 				hitsNS += profile.HitsNS
 				fallbackNS += profile.FallbackNS
 				hbcTotalNS += profile.HBCTotalNS
+				hbcSetupNS += profile.HBCSetupNS
 				hbcRootNS += profile.HBCRootLoadNS
+				hbcNodeMissNS += profile.HBCNodeMissNS
+				hbcQuantMissNS += profile.HBCQuantMissNS
 				hbcExpandNS += profile.HBCExpandNS
 				hbcLeafNS += profile.HBCLeafNS
 				hbcRerankNS += profile.HBCRerankNS
@@ -585,7 +591,10 @@ func BenchmarkZigDenseVectorSearchProfile(b *testing.B) {
 				b.ReportMetric(float64(hitsNS)/denom, "zig_hits_ns/op")
 				b.ReportMetric(float64(fallbackNS)/denom, "zig_fallback_ns/op")
 				b.ReportMetric(float64(hbcTotalNS)/denom, "zig_hbc_total_ns/op")
+				b.ReportMetric(float64(hbcSetupNS)/denom, "zig_hbc_setup_ns/op")
 				b.ReportMetric(float64(hbcRootNS)/denom, "zig_hbc_root_ns/op")
+				b.ReportMetric(float64(hbcNodeMissNS)/denom, "zig_hbc_node_miss_ns/op")
+				b.ReportMetric(float64(hbcQuantMissNS)/denom, "zig_hbc_quant_miss_ns/op")
 				b.ReportMetric(float64(hbcExpandNS)/denom, "zig_hbc_expand_ns/op")
 				b.ReportMetric(float64(hbcLeafNS)/denom, "zig_hbc_leaf_ns/op")
 				b.ReportMetric(float64(hbcRerankNS)/denom, "zig_hbc_rerank_ns/op")
@@ -594,6 +603,98 @@ func BenchmarkZigDenseVectorSearchProfile(b *testing.B) {
 				b.ReportMetric(float64(hbcNodes)/denom, "zig_hbc_nodes/op")
 				b.ReportMetric(float64(hbcLeaves)/denom, "zig_hbc_leaves/op")
 				b.ReportMetric(float64(hbcReranked)/denom, "zig_hbc_reranked/op")
+			}
+		})
+	}
+}
+
+func BenchmarkZigDenseVectorSearchWireProfile(b *testing.B) {
+	tableSchema := benchmarkSchema()
+	backend := benchmarkBackend{
+		name: "zig",
+		open: func(b *testing.B, tableSchema *schema.TableSchema) DB {
+			b.Helper()
+			db := NewZigCoreDB(zap.NewNop(), nil, tableSchema, map[string]indexes.IndexConfig{}, nil, nil, nil)
+			requireOpenBenchmarkDB(b, db, tableSchema)
+			return db
+		},
+	}
+
+	for _, vectorCase := range benchmarkVectorCases() {
+		vectorCase := vectorCase
+		b.Run(vectorCase.name, func(b *testing.B) {
+			db := backend.open(b, tableSchema)
+			requireAddIndex(b, db, *indexes.NewFullTextIndexConfig("full_text_index", false))
+			requireAddIndex(b, db, *indexes.NewEmbeddingsConfig("dense_idx", indexes.EmbeddingsIndexConfig{
+				Field:          "embedding",
+				Dimension:      vectorCase.dim,
+				DistanceMetric: indexes.DistanceMetricL2Squared,
+			}))
+			requireSeedDocs(b, db, vectorCase.count, Op_SyncLevelEmbeddings, func(i int) []byte {
+				return benchmarkDenseDocJSON("dense_idx", i, vectorCase.dim)
+			})
+
+			zigDB := db.(*ZigCoreDB)
+			reqBytes := encodeSearchWireDenseRequest("dense_idx", benchmarkVectorValues(0, vectorCase.dim), 10, 10, 0)
+			var totalNS uint64
+			var decodeNS uint64
+			var searchNS uint64
+			var resolveNS uint64
+			var encodeNS uint64
+			var fallbackNS uint64
+			var hbcTotalNS uint64
+			var hbcSetupNS uint64
+			var hbcRootNS uint64
+			var hbcNodeMissNS uint64
+			var hbcQuantMissNS uint64
+			var hbcExpandNS uint64
+			var hbcLeafNS uint64
+			var hbcRerankNS uint64
+			var hbcRerankLoadNS uint64
+			var hbcRerankDistNS uint64
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, profile, err := zigDB.bridge.SearchDenseWireProfile(reqBytes)
+				if err != nil {
+					b.Fatal(err)
+				}
+				totalNS += profile.TotalNS
+				decodeNS += profile.DecodeNS
+				searchNS += profile.SearchNS
+				resolveNS += profile.ResolveNS
+				encodeNS += profile.EncodeNS
+				fallbackNS += profile.FallbackNS
+				hbcTotalNS += profile.HBCTotalNS
+				hbcSetupNS += profile.HBCSetupNS
+				hbcRootNS += profile.HBCRootLoadNS
+				hbcNodeMissNS += profile.HBCNodeMissNS
+				hbcQuantMissNS += profile.HBCQuantMissNS
+				hbcExpandNS += profile.HBCExpandNS
+				hbcLeafNS += profile.HBCLeafNS
+				hbcRerankNS += profile.HBCRerankNS
+				hbcRerankLoadNS += profile.HBCRerankLoadNS
+				hbcRerankDistNS += profile.HBCRerankDistNS
+			}
+			if b.N > 0 {
+				denom := float64(b.N)
+				b.ReportMetric(float64(totalNS)/denom, "zig_wire_total_ns/op")
+				b.ReportMetric(float64(decodeNS)/denom, "zig_wire_decode_ns/op")
+				b.ReportMetric(float64(searchNS)/denom, "zig_wire_search_ns/op")
+				b.ReportMetric(float64(resolveNS)/denom, "zig_wire_resolve_ns/op")
+				b.ReportMetric(float64(encodeNS)/denom, "zig_wire_encode_ns/op")
+				b.ReportMetric(float64(fallbackNS)/denom, "zig_wire_fallback_ns/op")
+				b.ReportMetric(float64(hbcTotalNS)/denom, "zig_wire_hbc_total_ns/op")
+				b.ReportMetric(float64(hbcSetupNS)/denom, "zig_wire_hbc_setup_ns/op")
+				b.ReportMetric(float64(hbcRootNS)/denom, "zig_wire_hbc_root_ns/op")
+				b.ReportMetric(float64(hbcNodeMissNS)/denom, "zig_wire_hbc_node_miss_ns/op")
+				b.ReportMetric(float64(hbcQuantMissNS)/denom, "zig_wire_hbc_quant_miss_ns/op")
+				b.ReportMetric(float64(hbcExpandNS)/denom, "zig_wire_hbc_expand_ns/op")
+				b.ReportMetric(float64(hbcLeafNS)/denom, "zig_wire_hbc_leaf_ns/op")
+				b.ReportMetric(float64(hbcRerankNS)/denom, "zig_wire_hbc_rerank_ns/op")
+				b.ReportMetric(float64(hbcRerankLoadNS)/denom, "zig_wire_hbc_rerank_load_ns/op")
+				b.ReportMetric(float64(hbcRerankDistNS)/denom, "zig_wire_hbc_rerank_dist_ns/op")
 			}
 		})
 	}
@@ -628,6 +729,18 @@ func BenchmarkGoDenseVectorSearchProfile(b *testing.B) {
 				b.Fatal(err)
 			}
 
+			var totalNS uint64
+			var rootNS uint64
+			var nodeMissNS uint64
+			var quantMissNS uint64
+			var expandNS uint64
+			var leafNS uint64
+			var nodes uint64
+			var leaves uint64
+			var approxNodes uint64
+			var approxLeaves uint64
+			var approxVectors uint64
+			var exactVectors uint64
 			var reranked uint64
 			var rerankLoadNS uint64
 			var rerankDistNS uint64
@@ -639,14 +752,40 @@ func BenchmarkGoDenseVectorSearchProfile(b *testing.B) {
 					b.Fatal(err)
 				}
 				profile := vectorindex.LastHBCDebugSearchProfile()
+				totalNS += profile.TotalNS
+				rootNS += profile.RootLoadNS
+				nodeMissNS += profile.NodeCacheMissNS
+				quantMissNS += profile.QuantizedCacheMissNS
+				expandNS += profile.ChildExpandNS
+				leafNS += profile.LeafScoreNS
+				nodes += profile.NodesVisited
+				leaves += profile.LeavesExplored
+				approxNodes += profile.ApproxNodesExpanded
+				approxLeaves += profile.ApproxLeavesScored
+				approxVectors += profile.ApproxVectorsScored
+				exactVectors += profile.ExactVectorsScored
 				reranked += profile.RerankedVectors
 				rerankLoadNS += profile.RerankVectorLoadNS
 				rerankDistNS += profile.RerankDistanceNS
 			}
 			if b.N > 0 {
-				b.ReportMetric(float64(reranked)/float64(b.N), "go_hbc_reranked/op")
-				b.ReportMetric(float64(rerankLoadNS)/float64(b.N), "go_hbc_rerank_load_ns/op")
-				b.ReportMetric(float64(rerankDistNS)/float64(b.N), "go_hbc_rerank_dist_ns/op")
+				denom := float64(b.N)
+				b.ReportMetric(float64(totalNS)/denom, "go_hbc_total_ns/op")
+				b.ReportMetric(float64(rootNS)/denom, "go_hbc_root_ns/op")
+				b.ReportMetric(float64(nodeMissNS)/denom, "go_hbc_node_miss_ns/op")
+				b.ReportMetric(float64(quantMissNS)/denom, "go_hbc_quant_miss_ns/op")
+				b.ReportMetric(float64(expandNS)/denom, "go_hbc_expand_ns/op")
+				b.ReportMetric(float64(leafNS)/denom, "go_hbc_leaf_ns/op")
+				b.ReportMetric(float64(nodes)/denom, "go_hbc_nodes/op")
+				b.ReportMetric(float64(leaves)/denom, "go_hbc_leaves/op")
+				b.ReportMetric(float64(approxNodes)/denom, "go_hbc_approx_nodes/op")
+				b.ReportMetric(float64(approxLeaves)/denom, "go_hbc_approx_leaves/op")
+				b.ReportMetric(float64(approxVectors)/denom, "go_hbc_approx_vectors/op")
+				b.ReportMetric(float64(exactVectors)/denom, "go_hbc_exact_vectors/op")
+				b.ReportMetric(float64(reranked)/denom, "go_hbc_reranked/op")
+				b.ReportMetric(float64(rerankLoadNS)/denom, "go_hbc_rerank_load_ns/op")
+				b.ReportMetric(float64(rerankDistNS)/denom, "go_hbc_rerank_dist_ns/op")
+				b.ReportMetric(float64(totalNS-rootNS-nodeMissNS-quantMissNS-expandNS-leafNS-rerankLoadNS-rerankDistNS)/denom, "go_hbc_other_ns/op")
 			}
 		})
 	}

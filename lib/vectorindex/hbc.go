@@ -110,9 +110,53 @@ type RerankPolicy uint8
 
 const (
 	RerankPolicyAlways RerankPolicy = iota
-	RerankPolicyAuto
+	RerankPolicyBoundary
 	RerankPolicyNever
 )
+
+func planBoundaryRerankCandidates(approx []*Result, k int) (definiteIn []*Result, ambiguous []*Result) {
+	if len(approx) == 0 || k <= 0 {
+		return nil, nil
+	}
+
+	sorted := slices.Clone(approx)
+	slices.SortFunc(sorted, func(a, b *Result) int {
+		if a.Distance != b.Distance {
+			return cmp.Compare(a.Distance, b.Distance)
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+
+	if len(sorted) <= k {
+		return sorted, nil
+	}
+
+	outsideMinLower := float32(math.Inf(1))
+	for _, item := range sorted[k:] {
+		outsideMinLower = min(outsideMinLower, item.Distance-item.ErrorBound)
+	}
+
+	insideMaxUpper := float32(math.Inf(-1))
+	for _, item := range sorted[:k] {
+		insideMaxUpper = max(insideMaxUpper, item.Distance+item.ErrorBound)
+	}
+
+	definiteIn = make([]*Result, 0, k)
+	ambiguous = make([]*Result, 0, len(sorted))
+	for _, item := range sorted[:k] {
+		if item.Distance+item.ErrorBound < outsideMinLower {
+			definiteIn = append(definiteIn, item)
+		} else {
+			ambiguous = append(ambiguous, item)
+		}
+	}
+	for _, item := range sorted[k:] {
+		if item.Distance-item.ErrorBound <= insideMaxUpper {
+			ambiguous = append(ambiguous, item)
+		}
+	}
+	return definiteIn, ambiguous
+}
 
 // hbcIndexMetadata holds the global index metadata
 type hbcIndexMetadata struct {
@@ -800,6 +844,7 @@ func (idx *HBCIndex) updateQuantizedVectors(
 }
 
 func (idx *HBCIndex) loadNodeNoCache(db pebble.Reader, nodeID uint64) (*HBCNode, error) {
+	loadStart := time.Now()
 	node := idx.nodePool.Get().(*HBCNode)
 	node.reset()
 	node.ID = nodeID
@@ -867,11 +912,17 @@ func (idx *HBCIndex) loadNodeNoCache(db pebble.Reader, nodeID uint64) (*HBCNode,
 	if idx.config.UseQuantization {
 		quantizedKey := makeHBCQuantizedKey(idx.prefix, nodeID)
 		if quantizedData, closer, err := db.Get(quantizedKey); err == nil {
+			quantizedStart := time.Now()
 			// Deserialize quantized vector set
 			node.QuantizedVectors = idx.deserializeQuantizedSet(quantizedData, node.Parent == 0)
+			hbcDebugQuantizedCacheMissNS.Add(uint64(time.Since(quantizedStart).Nanoseconds()))
+			hbcDebugQuantizedCacheMisses.Add(1)
 			_ = closer.Close()
 		}
 	}
+
+	hbcDebugNodeCacheMissNS.Add(uint64(time.Since(loadStart).Nanoseconds()))
+	hbcDebugNodeCacheMisses.Add(1)
 
 	return node, nil
 }
@@ -1869,8 +1920,29 @@ func (idx *HBCIndex) Search(req *SearchRequest) (r []*Result, err error) {
 		collapseKeyToItem = make(map[string]*PriorityItem, req.K)
 	}
 
+	totalSearchStart := time.Now()
+	rootLoadNS := uint64(0)
+	nodeCacheMissNSStart := hbcDebugNodeCacheMissNS.Load()
+	nodeCacheMissesStart := hbcDebugNodeCacheMisses.Load()
+	quantizedCacheMissNSStart := hbcDebugQuantizedCacheMissNS.Load()
+	quantizedCacheMissesStart := hbcDebugQuantizedCacheMisses.Load()
+	childExpandNS := uint64(0)
+	leafScoreNS := uint64(0)
+	approxFillPushes := uint64(0)
+	approxRejects := uint64(0)
+	approxCloserPushes := uint64(0)
+	approxMaybePushes := uint64(0)
+	approxDefinitePops := uint64(0)
+	approxTrimPops := uint64(0)
+	approxNodesExpanded := uint64(0)
+	approxLeavesScored := uint64(0)
+	approxVectorsScored := uint64(0)
+	exactVectorsScored := uint64(0)
+
 	// Start with root
+	rootLoadStart := time.Now()
 	root, err := idx.loadNode(idx.indexDB, idx.readerCache, rootNodeID)
+	rootLoadNS += uint64(time.Since(rootLoadStart).Nanoseconds())
 	if err != nil {
 		return nil, fmt.Errorf("loading root: %w", err)
 	}
@@ -1922,7 +1994,9 @@ func (idx *HBCIndex) Search(req *SearchRequest) (r []*Result, err error) {
 			leavesExplored++
 
 			// Use quantized vectors if available
+			leafScoreStart := time.Now()
 			if idx.config.UseQuantization && node.QuantizedVectors != nil {
+				approxLeavesScored++
 				// Use quantized search
 				tempDists := stackAllocator.AllocFloat32s(len(node.Members))
 				tempErrorBounds := stackAllocator.AllocFloat32s(len(node.Members))
@@ -1940,6 +2014,7 @@ func (idx *HBCIndex) Search(req *SearchRequest) (r []*Result, err error) {
 					tempErrorBounds,
 				)
 
+				approxVectorsScored += uint64(len(node.Members))
 				for i, memberID := range node.Members {
 					// Check filter if provided
 					if shouldSkip(memberID) {
@@ -1975,30 +2050,42 @@ func (idx *HBCIndex) Search(req *SearchRequest) (r []*Result, err error) {
 
 					if results.Len() < req.K {
 						insertResultWithCollapse(results, pi, metadata, collapseKeyToItem, idx.config.CollapseKeysFunc)
+						approxFillPushes++
 						continue
 					}
 					topCurrentResult := results.Peek()
 					if topCurrentResult == nil {
 						continue
 					}
+					maybeCloser := pi.MaybeCloser(topCurrentResult)
+					if results.Len() >= req.K*int(math32.Ceil(idx.config.Episilon2+1)) && !maybeCloser {
+						approxRejects++
+						continue
+					}
 					if dist < topCurrentResult.Distance {
 						if pi.DefinitelyCloser(topCurrentResult) {
 							// Remove the furthest result if the new result is closer even considering error bounds
 							heap.Pop(results)
+							approxDefinitePops++
 						}
 						insertResultWithCollapse(results, pi, metadata, collapseKeyToItem, idx.config.CollapseKeysFunc)
-					} else if pi.MaybeCloser(topCurrentResult) {
+						approxCloserPushes++
+					} else if maybeCloser {
 						insertResultWithCollapse(results, pi, metadata, collapseKeyToItem, idx.config.CollapseKeysFunc)
+						approxMaybePushes++
 					}
 					if results.Len() > req.K*int(math32.Ceil(idx.config.Episilon2+1)) {
 						heap.Pop(results)
+						approxTrimPops++
 					}
 				}
 				stackAllocator.FreeFloat32s(tempErrorBounds)
 				stackAllocator.FreeFloat32s(tempDists)
+				leafScoreNS += uint64(time.Since(leafScoreStart).Nanoseconds())
 			} else {
 				// Use exact search (for root or when quantization is disabled)
 				members := node.Members
+				exactVectorsScored += uint64(len(members))
 
 				tempVec := stackAllocator.AllocVector(int(idx.config.Dimension))
 				for _, memberID := range members {
@@ -2048,10 +2135,13 @@ func (idx *HBCIndex) Search(req *SearchRequest) (r []*Result, err error) {
 					}
 				}
 				stackAllocator.FreeVector(tempVec)
+				leafScoreNS += uint64(time.Since(leafScoreStart).Nanoseconds())
 			}
 		} else {
+			expandStart := time.Now()
 			// Use quantized vectors if available
 			if idx.config.UseQuantization && node.QuantizedVectors != nil {
+				approxNodesExpanded++
 				// Use quantized search
 				count := len(node.Children)
 				tempFloats := stackAllocator.AllocFloat32s(count * 2)
@@ -2076,6 +2166,7 @@ func (idx *HBCIndex) Search(req *SearchRequest) (r []*Result, err error) {
 					}
 				}
 				stackAllocator.FreeFloat32s(tempFloats)
+				childExpandNS += uint64(time.Since(expandStart).Nanoseconds())
 			} else {
 				// Add children to candidates
 				children := node.Children
@@ -2091,6 +2182,7 @@ func (idx *HBCIndex) Search(req *SearchRequest) (r []*Result, err error) {
 						heap.Push(candidates, &PriorityItem{ID: childID, Distance: childDist})
 					}
 				}
+				childExpandNS += uint64(time.Since(expandStart).Nanoseconds())
 			}
 		}
 	}
@@ -2101,6 +2193,10 @@ func (idx *HBCIndex) Search(req *SearchRequest) (r []*Result, err error) {
 	rerankVectorLoadNS := uint64(0)
 	rerankDistanceNS := uint64(0)
 	shouldRerank := idx.config.UseQuantization && idx.config.RerankPolicy != RerankPolicyNever
+	useBoundaryRerank := idx.config.UseQuantization &&
+		idx.config.RerankPolicy == RerankPolicyBoundary &&
+		req.DistanceOver == nil &&
+		req.DistanceUnder == nil
 
 	for results.Len() > 0 {
 		item := heap.Pop(results).(*PriorityItem)
@@ -2124,7 +2220,7 @@ func (idx *HBCIndex) Search(req *SearchRequest) (r []*Result, err error) {
 			Metadata:   metadata,
 			ErrorBound: item.ErrorBounds,
 		}
-		if shouldRerank {
+		if shouldRerank && !useBoundaryRerank {
 			res.Vector = make(vector.T, int(idx.config.Dimension))
 			var err error
 			loadStart := time.Now()
@@ -2136,15 +2232,67 @@ func (idx *HBCIndex) Search(req *SearchRequest) (r []*Result, err error) {
 		finalResults = append(finalResults, res)
 	}
 	if shouldRerank {
-		rerankedVectors = uint64(len(finalResults))
-		distStart := time.Now()
-		q.ComputeExactDistances(true, finalResults)
-		rerankDistanceNS = uint64(time.Since(distStart).Nanoseconds())
+		if useBoundaryRerank {
+			definiteIn, ambiguous := planBoundaryRerankCandidates(finalResults, req.K)
+			exactAmbiguous := make([]*Result, 0, len(ambiguous))
+			for _, res := range ambiguous {
+				res.Vector = make(vector.T, int(idx.config.Dimension))
+				var err error
+				loadStart := time.Now()
+				if res.Vector, err = idx.GetVector(idx.indexDB, res.ID, res.Vector); err != nil {
+					continue
+				}
+				rerankVectorLoadNS += uint64(time.Since(loadStart).Nanoseconds())
+				distStart := time.Now()
+				q.ComputeExactDistance(true, res)
+				rerankDistanceNS += uint64(time.Since(distStart).Nanoseconds())
+				rerankedVectors++
+				exactAmbiguous = append(exactAmbiguous, res)
+			}
+			slices.SortFunc(exactAmbiguous, func(a, b *Result) int {
+				if a.Distance != b.Distance {
+					return cmp.Compare(a.Distance, b.Distance)
+				}
+				return cmp.Compare(a.ID, b.ID)
+			})
+			finalResults = finalResults[:0]
+			finalResults = append(finalResults, definiteIn...)
+			needed := req.K - len(definiteIn)
+			if needed < 0 {
+				needed = 0
+			}
+			finalResults = append(finalResults, exactAmbiguous[:min(needed, len(exactAmbiguous))]...)
+		} else {
+			rerankedVectors = uint64(len(finalResults))
+			distStart := time.Now()
+			q.ComputeExactDistances(true, finalResults)
+			rerankDistanceNS = uint64(time.Since(distStart).Nanoseconds())
+		}
 	}
 	recordHBCDebugSearchProfile(HBCDebugSearchProfile{
-		RerankedVectors:    rerankedVectors,
-		RerankVectorLoadNS: rerankVectorLoadNS,
-		RerankDistanceNS:   rerankDistanceNS,
+		TotalNS:              uint64(time.Since(totalSearchStart).Nanoseconds()),
+		RootLoadNS:           rootLoadNS,
+		NodeCacheMissNS:      hbcDebugNodeCacheMissNS.Load() - nodeCacheMissNSStart,
+		NodeCacheMisses:      hbcDebugNodeCacheMisses.Load() - nodeCacheMissesStart,
+		QuantizedCacheMissNS: hbcDebugQuantizedCacheMissNS.Load() - quantizedCacheMissNSStart,
+		QuantizedCacheMisses: hbcDebugQuantizedCacheMisses.Load() - quantizedCacheMissesStart,
+		ChildExpandNS:        childExpandNS,
+		LeafScoreNS:          leafScoreNS,
+		ApproxFillPushes:     approxFillPushes,
+		ApproxRejects:        approxRejects,
+		ApproxCloserPushes:   approxCloserPushes,
+		ApproxMaybePushes:    approxMaybePushes,
+		ApproxDefinitePops:   approxDefinitePops,
+		ApproxTrimPops:       approxTrimPops,
+		NodesVisited:         uint64(nodesExplored),
+		LeavesExplored:       uint64(leavesExplored),
+		ApproxNodesExpanded:  approxNodesExpanded,
+		ApproxLeavesScored:   approxLeavesScored,
+		ApproxVectorsScored:  approxVectorsScored,
+		ExactVectorsScored:   exactVectorsScored,
+		RerankedVectors:      rerankedVectors,
+		RerankVectorLoadNS:   rerankVectorLoadNS,
+		RerankDistanceNS:     rerankDistanceNS,
 	})
 	slices.SortFunc(finalResults, func(a, b *Result) int {
 		return cmp.Compare(a.Distance, b.Distance)
